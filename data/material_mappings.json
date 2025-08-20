@@ -1,0 +1,140 @@
+{
+    "villa_and_multi_story_materials": {
+        "Foundation": [
+            "RC, Best workmanship",
+            "RC, Good workmanship",
+            "RC, Stone Masonry",
+            "Stone Masonry"
+        ],
+        "Roofing": [
+            "Decra, RC, EGA & similar tiles",
+            "CIS G 28, CIS G 32, GQ",
+            "CIS G32",
+            "CIS G 32 & 35"
+        ],
+        "Metal Work": [
+            "Aluminum profile",
+            "Aluminum imitation",
+            "LTZ"
+        ],
+        "Floor": [
+            "Granite, Marble, ceramic, parquet, porcelain",
+            "Parquet, Ceramic, All GQ",
+            "PVC, Terrazzo, Cement tiles",
+            "Cement tiles, Sc."
+        ],
+        "Ceiling": [
+            "Gypsum, PVC, Parquet",
+            "Good quality gypsum, PVC",
+            "Chip wood, Hard Board, Ply wood",
+            "Abujidi"
+        ],
+        "Sanitary": [
+            "Jacuzzi, Steam, Sauna",
+            "Good quality HWB, WC etc.",
+            "Shower, HWB, WC (all MQ)",
+            "Dry latrine, Turkish seat"
+        ]
+    },
+    "mph_factory_materials": {
+        "Foundation": [
+            "RC, Best workmanship",
+            "RC, Good workmanship",
+            "RC, Stone Masonry",
+            "Stone Masonry"
+        ],
+        "Structure": [
+            "RC, Steel Structure, Best workmanship",
+            "RC, Steel Structure, Good workmanship",
+            "RC, (Average)",
+            "RC, Wooden structure"
+        ],
+        "Roofing": [
+            "EGA on steel, RC Slab",
+            "CIS G 28, CIS G 32, on steel GQ",
+            "CIS G32 on wood (Average)",
+            "CIS G 32 & 35 on wood"
+        ],
+        "Metal Work": [
+            "Al. Pro, Al imitation",
+            "Al imitation LTZ",
+            "LTZ"
+        ],
+        "Floor": [
+            "Best quality, Epoxy, Ceramic, PVC, marble, granite",
+            "Good quality Cement Tiles/Screed, PVC, Terrazzo",
+            "Cement screed Average)",
+            "Sc."
+        ]
+    },
+    "villa_and_multi_story_mapping": {
+        "Foundation": {
+            "RC, Best": "Excellent",
+            "RC, Good": "Good",
+            "RC, Stone": "Average",
+            "Stone Masonry": "Economy"
+        },
+        "Roofing": {
+            "Decra": "Excellent",
+            "EGA": "Excellent",
+            "CIS G 28": "Good",
+            "CIS G32": "Average"
+        },
+        "Metal Work": {
+            "Aluminum profile": "Excellent",
+            "Aluminum imitation": "Good",
+            "LTZ": "Average"
+        },
+        "Floor": {
+            "Granite": "Excellent",
+            "Marble": "Excellent",
+            "Parquet": "Good",
+            "PVC": "Average",
+            "Terrazzo": "Average",
+            "Cement tiles": "Economy"
+        },
+        "Ceiling": {
+            "Gypsum": "Excellent",
+            "PVC": "Excellent",
+            "Chip wood": "Average",
+            "Abujidi": "Economy"
+        },
+        "Sanitary": {
+            "Jacuzzi": "Excellent",
+            "Good quality": "Good",
+            "Shower": "Average",
+            "Dry latrine": "Economy"
+        }
+    },
+    "mph_factory_mapping": {
+        "Foundation": {
+            "RC, Best": "Excellent",
+            "RC, Good": "Good",
+            "RC, Stone": "Average",
+            "Stone Masonry": "Economy"
+        },
+        "Structure": {
+            "Steel Structure, Best": "Excellent",
+            "Steel Structure, Good": "Good",
+            "RC, (Average)": "Average",
+            "Wooden": "Economy"
+        },
+        "Roofing": {
+            "EGA on steel": "Excellent",
+            "CIS G 28": "Good",
+            "CIS G32 on wood": "Average"
+        },
+        "Metal Work": {
+            "Al. Pro": "Excellent",
+            "Al imitation": "Good",
+            "LTZ": "Average"
+        },
+        "Floor": {
+            "Epoxy": "Excellent",
+            "Granite": "Excellent",
+            "Good quality Cement": "Good",
+            "Cement screed": "Average",
+            "Sc.": "Economy"
+        }
+    }
+}

@@ -1,6 +1,6 @@
 # core/calculation_engine.py
 
-from .data_loader import (
+from core.data_loader import (
     get_building_rates_data, get_component_percentages, 
     get_mapping_by_category, get_fuel_station_rates, get_coffee_site_rates,
     get_all_location_data, get_minimum_completion_stages, get_elevator_rates,
