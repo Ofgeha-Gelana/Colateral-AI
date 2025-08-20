@@ -1,0 +1,67 @@
+[
+    {
+        "Building Type": "G+1 and G+2",
+        "Excellent_Min": 28513,
+        "Excellent_Max": 31517,
+        "Good_Min": 23969,
+        "Good_Max": 26503,
+        "Average_Min": 18679,
+        "Average_Max": 20663,
+        "Economy_Min": 13967,
+        "Economy_Max": 15428,
+        "Minimum_Min": 11847,
+        "Minimum_Max": 13087
+    },
+    {
+        "Building Type": "G+3 and G+4",
+        "Excellent_Min": 31464,
+        "Excellent_Max": 34797,
+        "Good_Min": 25622,
+        "Good_Max": 28321,
+        "Average_Min": 21352,
+        "Average_Max": 23611,
+        "Economy_Min": 16199,
+        "Economy_Max": 17908,
+        "Minimum_Min": 14822,
+        "Minimum_Max": 16393
+    },
+    {
+        "Building Type": "G+5 and G+6",
+        "Excellent_Min": 32205,
+        "Excellent_Max": 35595,
+        "Good_Min": 25840,
+        "Good_Max": 28568,
+        "Average_Min": 21158,
+        "Average_Max": 23389,
+        "Economy_Min": 15869,
+        "Economy_Max": 17522,
+        "Minimum_Min": 13995,
+        "Minimum_Max": 15042
+    },
+    {
+        "Building Type": "G+7 and Above",
+        "Excellent_Min": 31242,
+        "Excellent_Max": 34519,
+        "Good_Min": 27634,
+        "Good_Max": 30525,
+        "Average_Min": 24989,
+        "Average_Max": 27605,
+        "Economy_Min": 21985,
+        "Economy_Max": 24299,
+        "Minimum_Min": 20938,
+        "Minimum_Max": 22260
+    },
+    {
+        "Building Type": "Single Story Building (higher Villa)",
+        "Excellent_Min": 32900,
+        "Excellent_Max": 36358,
+        "Good_Min": 23490,
+        "Good_Max": 25960,
+        "Average_Min": 16351,
+        "Average_Max": 18080,
+        "Economy_Min": 11486,
+        "Economy_Max": 12696,
+        "Minimum_Min": 5582,
+        "Minimum_Max": 6175
+    }
+]
