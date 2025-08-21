@@ -32,3 +32,9 @@ tzdata==2025.2
 urllib3==2.5.0
 xlrd==2.0.2
 zstandard==0.24.0
+langgraph>=0.0.8
+langchain
+python-dotenv>=1.0.0
+google-auth>=2.23
+rich>=13.4.2
+
