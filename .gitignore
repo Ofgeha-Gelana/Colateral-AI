@@ -1,0 +1,17 @@
+# Virtual environment directory
+venv/
+
+# PyCharm-specific files
+.idea/
+
+# macOS-specific files
+.DS_Store
+
+# Pythn cache files
+__pycache__/
+*.pyc
+
+# IDE files
+*.sublime-project
+*.sublime-workspace
+.vscode/
