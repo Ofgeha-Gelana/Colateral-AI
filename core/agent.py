@@ -19,8 +19,6 @@ from typing import Dict, List, TypedDict, Optional
 from langchain.chat_models import init_chat_model
 from langgraph.graph import StateGraph, START, END
 
-# If you prefer the prebuilt agent wrapper, you can still import it, but here we
-# call the tool directly for determinism.
 from .tools import property_valuation_tool
 from dotenv import load_dotenv
 
@@ -31,7 +29,7 @@ load_dotenv()
 # ------------------------------
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 
-# Domain enumerations (kept here for prompting & validation)
+# Domain enumerations
 VALID_CATEGORIES = [
     "Higher Villa",
     "Multi-Story Building",
@@ -64,90 +62,67 @@ VALID_TOWN_CLASSES = [
 class ValuationState(TypedDict):
     messages: List[Dict]
     slots: Dict[str, object]
-    asked: List[str]  # what we've already asked to avoid repetition
-
+    asked: List[str]
 
 def initial_state() -> ValuationState:
     return {"messages": [], "slots": {}, "asked": []}
 
-
-# Required slots for the base (single-building) MVP
+# ------------------------------
+# 3) Required slots
+# ------------------------------
 REQUIRED_SLOTS_IN_ORDER = [
-    "building_name",            # e.g., "Block A" (for reporting)
-    "building_category",        # one of VALID_CATEGORIES
-    "length_m",                 # float (m)
-    "width_m",                  # float (m)
-    "num_floors",               # int
-    "has_basement",             # bool
-    "confirmed_grade",          # one of VALID_GRADES
-    "plot_area_sqm",            # float
-    "prop_town",                # one of VALID_TOWN_CLASSES
-    "gen_use",                  # one of VALID_USE
-    "plot_grade",               # one of VALID_PLOT_GRADES
-    # Optional financial factors (default 1.0)
-    "mcf",                      # float (default 1.0)
-    "pef",                      # float (default 1.0)
-    # Optional extras
-    "has_elevator",             # bool
-    "elevator_stops",           # int (required if has_elevator True)
+    "building_name",
+    "building_category",
+    "length_m",
+    "width_m",
+    "num_floors",
+    "has_basement",
+    "confirmed_grade",
+    "plot_area_sqm",
+    "prop_town",
+    "gen_use",
+    "plot_grade",
+    "mcf",
+    "pef",
+    "has_elevator",
+    "elevator_stops",
 ]
 
-# For categories with special components, you can extend here (MVP keeps it simple)
-CATEGORY_SPECIAL_SLOTS: Dict[str, List[str]] = {
-    # "Fuel Station": ["pump_island", "ugt_30m3", "ugt_50m3", "steel_canopy_sqm"],
-    # "Coffee Washing Site": ["cherry_hopper_sqm", "fermentation_tanks_sqm", ...],
-    # "Green House": ["greenhouse_cover_sqm", "in_farm_road_km", ...],
-}
-
+CATEGORY_SPECIAL_SLOTS: Dict[str, List[str]] = {}
 
 # ------------------------------
-# 3) Utility helpers
+# 4) Helpers
 # ------------------------------
-
 def _boolify(text: str) -> Optional[bool]:
     t = text.strip().lower()
     if t in {"yes", "y", "true", "t", "1"}: return True
     if t in {"no", "n", "false", "f", "0"}: return False
     return None
 
-
 def missing_slots(slots: Dict[str, object]) -> List[str]:
-    """Return the remaining required slots based on current slots and category rules."""
     needed = [s for s in REQUIRED_SLOTS_IN_ORDER if s not in slots]
-
     cat = slots.get("building_category")
     if isinstance(cat, str) and cat in CATEGORY_SPECIAL_SLOTS:
         for s in CATEGORY_SPECIAL_SLOTS[cat]:
             if s not in slots:
                 needed.append(s)
-
-    # If has_elevator is False, do not require elevator_stops
     if "has_elevator" in slots and slots.get("has_elevator") in (False, "False", 0):
         needed = [s for s in needed if s != "elevator_stops"]
-
     return needed
 
-
 # ------------------------------
-# 4) Nodes
+# 5) Nodes
 # ------------------------------
-
 def extract_info_node(state: ValuationState) -> ValuationState:
-    """LLM-based extraction from the latest user message into structured slots.
-    We ask the model to output strict JSON and then safely parse+merge.
-    """
     if not state.get("messages"):
         return state
-
-    # Get latest user message (assumes CLI pushes user messages)
     last = state["messages"][-1]
     if last.get("role") != "user":
         return state
 
     prompt = f"""
     You are an information extraction parser for a property valuation chatbot.
-    Read the user message and extract ONLY the following fields. If a field is not present, output null.
-    Return STRICT JSON with these keys exactly:
+    Extract only the following fields as strict JSON. If a field is not present, use null:
     {{
       "building_name": string or null,
       "building_category": one of {VALID_CATEGORIES} or null,
@@ -166,56 +141,41 @@ def extract_info_node(state: ValuationState) -> ValuationState:
       "elevator_stops": integer or null
     }}
     User message: '{last.get("content", "")}'
-    Output ONLY JSON. No commentary.
+    Output ONLY JSON.
     """
-
     resp = llm.invoke([{"role": "system", "content": "Return JSON only."},
                        {"role": "user", "content": prompt}])
-
     text = resp.content.strip()
-    # Guard for fenced code blocks
-    if text.startswith("```)" ):
-        # Very defensive clean-up
-        text = text.strip().strip("`")
+    if text.startswith("```"):
+        text = text.strip("`")
         if text.lower().startswith("json"):
             text = text[4:].strip()
-
     try:
         data = json.loads(text)
     except Exception:
-        # If parsing fails, do nothing; ask a direct question next
         return state
-
-    # Normalize some booleans
     if isinstance(data.get("has_basement"), str):
-        b = _boolify(data["has_basement"]) ;
+        b = _boolify(data["has_basement"])
         if b is not None: data["has_basement"] = b
     if isinstance(data.get("has_elevator"), str):
-        b = _boolify(data["has_elevator"]) ;
+        b = _boolify(data["has_elevator"])
         if b is not None: data["has_elevator"] = b
-
-    # Merge into state.slots (keep previous unless overridden by non-null)
     merged = dict(state.get("slots", {}))
     for k, v in data.items():
         if v is not None:
             merged[k] = v
-
     state["slots"] = merged
     return state
-
 
 def ask_next_question_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
     asked = set(state.get("asked", []))
     remaining = [s for s in missing_slots(slots) if s not in asked]
-
     if not remaining:
         return state
-
     s = remaining[0]
 
-    # Map slot to options if predefined
-    options_map = {
+    OPTIONS_MAP = {
         "building_category": VALID_CATEGORIES,
         "confirmed_grade": VALID_GRADES,
         "gen_use": VALID_USE,
@@ -223,12 +183,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         "prop_town": VALID_TOWN_CLASSES,
     }
 
-    # Default prompt
-    q: str
-
-    if s in options_map:
-        choices = options_map[s]
-        q = f"Please select {s.replace('_', ' ')} from the following options:\n" + "\n".join(f"{i+1}. {c}" for i, c in enumerate(choices))
+    if s in OPTIONS_MAP:
+        choices = OPTIONS_MAP[s]
+        q = f"Please select {s.replace('_', ' ')} from the following options:\n" + \
+            "\n".join(f"{i+1}. {c}" for i, c in enumerate(choices))
     elif s == "building_name":
         q = "What is the building name or identifier (e.g., 'Block A' or 'Villa 1')?"
     elif s == "length_m":
@@ -252,20 +210,14 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     else:
         q = f"Please provide the value for: {s}"
 
-    # Append question
     state["messages"].append({"role": "assistant", "content": q})
     state.setdefault("asked", []).append(s)
     return state
 
-
 def calculate_node(state: ValuationState) -> ValuationState:
-    """Build the tool payload and call the valuation engine."""
     slots = state.get("slots", {})
-
-    # Defaults for optional fields
     mcf = float(slots.get("mcf", 1.0) or 1.0)
     pef = float(slots.get("pef", 1.0) or 1.0)
-
     has_elevator = bool(slots.get("has_elevator", False))
     elevator_stops = int(slots.get("elevator_stops", 0) or 0)
 
@@ -276,11 +228,11 @@ def calculate_node(state: ValuationState) -> ValuationState:
         "width": float(slots.get("width_m")),
         "num_floors": int(slots.get("num_floors")),
         "has_basement": bool(slots.get("has_basement", False)),
-        "is_under_construction": False,  # MVP; extend if you capture this slot
+        "is_under_construction": False,
         "incomplete_components": [],
         "selected_materials": {},
         "confirmed_grade": str(slots.get("confirmed_grade")),
-        "specialized_components": {},  # Extend for Fuel/Coffee/GreenHouse
+        "specialized_components": {},
     }
 
     property_details = {
@@ -296,7 +248,6 @@ def calculate_node(state: ValuationState) -> ValuationState:
     }
 
     other_costs = {
-        # Keep zero by default; wire to new slots if needed
         "fence_percent": 0.0,
         "septic_percent": 0.0,
         "external_works_percent": 0.0,
@@ -315,66 +266,70 @@ def calculate_node(state: ValuationState) -> ValuationState:
         "remarks": "Generated by LangGraph agent",
     }
 
-    # Call the tool directly for a deterministic execution
     result_text: str = property_valuation_tool.invoke(payload)
-
     state["messages"].append({"role": "assistant", "content": result_text})
     return state
 
-
 # ------------------------------
-# 5) Routing / edges
+# 6) Routing / edges
 # ------------------------------
-
 def should_calculate(state: ValuationState) -> str:
-    """Conditional router: if all slots are filled -> CALC, else ASK again."""
     remaining = missing_slots(state.get("slots", {}))
     return "CALC" if not remaining else "ASK"
 
-
-# ------------------------------
-# 6) Build the graph
-# ------------------------------
-
 def build_graph():
     builder = StateGraph(ValuationState)
-
-    # Nodes
     builder.add_node("extract_info", extract_info_node)
     builder.add_node("ask", ask_next_question_node)
     builder.add_node("calculate", calculate_node)
-
-    # Edges
     builder.add_edge(START, "extract_info")
     builder.add_conditional_edges(
         "extract_info",
         should_calculate,
         {"ASK": "ask", "CALC": "calculate"},
     )
-    builder.add_edge("ask", "extract_info")  # loop until complete
+    builder.add_edge("ask", "extract_info")
     builder.add_edge("calculate", END)
-
     return builder.compile()
-
 
 graph = build_graph()
 
-
 # ------------------------------
-# 7) Simple CLI runner for local testing
+# 7) CLI Runner with numbered options
 # ------------------------------
 if __name__ == "__main__":
     print("\n🏗️ Property Valuation Agent (LangGraph)\nType 'quit' to exit.\n")
     state: ValuationState = initial_state()
+    OPTIONS_MAP = {
+        "building_category": VALID_CATEGORIES,
+        "confirmed_grade": VALID_GRADES,
+        "gen_use": VALID_USE,
+        "plot_grade": VALID_PLOT_GRADES,
+        "prop_town": VALID_TOWN_CLASSES,
+    }
 
     while True:
-        user = input("You: ")
-        if user.strip().lower() in {"quit", "exit"}:
+        user_input = input("You: ").strip()
+        if user_input.lower() in {"quit", "exit"}:
             print("👋 Goodbye!")
             break
 
-        state["messages"].append({"role": "user", "content": user})
-        state = graph.invoke(state)
+        if state["messages"]:
+            last_question = state["messages"][-1]["content"].lower()
+            for slot, choices in OPTIONS_MAP.items():
+                if slot.replace("_", " ") in last_question:
+                    if user_input.isdigit():
+                        idx = int(user_input) - 1
+                        if 0 <= idx < len(choices):
+                            user_input = choices[idx]
+                    else:
+                        for c in choices:
+                            if user_input.lower() == c.lower():
+                                user_input = c
+                                break
+                    break
 
-        # Print the last assistant message
-        print("Bot:", state["messages"][-1]["content"], "\n")
+        state["messages"].append({"role": "user", "content": user_input})
+        state = graph.invoke(state)
+        last_bot_msg = state["messages"][-1]["content"]
+        print("Bot:", last_bot_msg, "\n")
