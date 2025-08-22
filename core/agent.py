@@ -78,7 +78,8 @@ def missing_slots(slots: Dict[str, object]) -> List[str]:
         for s in CATEGORY_SPECIAL_SLOTS[cat]:
             if s not in slots:
                 needed.append(s)
-    if "has_elevator" in slots and slots.get("has_elevator") in (False, "False", 0):
+    # skip elevator stops if no elevator
+    if "has_elevator" in slots and slots.get("has_elevator") is False:
         needed = [s for s in needed if s != "elevator_stops"]
     return needed
 
@@ -92,16 +93,23 @@ def extract_info_node(state: ValuationState) -> ValuationState:
     if last.get("role") != "user":
         return state
 
-    # ----- Direct assignment for simple free-text slots -----
     asked_slots = state.get("asked", [])
     if asked_slots:
         last_asked = asked_slots[-1]
-        # for non-choice slots, just save input directly
+
+        # Normalize yes/no to boolean immediately
+        if last_asked in {"has_basement", "has_elevator"}:
+            b = _boolify(last.get("content", "").strip())
+            if b is not None:
+                state["slots"][last_asked] = b
+                return state
+
+        # Free-text slots (just save input)
         if last_asked not in {"building_category", "confirmed_grade", "gen_use", "plot_grade", "prop_town"}:
             state["slots"][last_asked] = last.get("content", "").strip()
             return state
 
-    # ----- Handle numbered choice answers -----
+    # Numbered choices
     expected = state["slots"].get("__expected_choices__")
     if expected:
         slot, choices = expected
@@ -113,7 +121,7 @@ def extract_info_node(state: ValuationState) -> ValuationState:
                 state["slots"].pop("__expected_choices__", None)
                 return state
 
-    # ----- Fallback: try LLM JSON extraction -----
+    # Fallback: try LLM extraction
     prompt = f"""
 You are an information extraction parser for a property valuation chatbot.
 Return STRICT JSON with the following keys. If not present, use null:
@@ -143,19 +151,20 @@ Output ONLY JSON. No commentary.
         text = resp.content.strip()
         data = json.loads(text)
     except Exception:
-        # fallback: assign raw input to last asked slot
+        # fallback: save raw input to last asked slot
         if asked_slots:
             last_asked = asked_slots[-1]
             state["slots"][last_asked] = last.get("content", "").strip()
         return state
 
-    if isinstance(data.get("has_basement"), str):
-        b = _boolify(data["has_basement"])
-        if b is not None: data["has_basement"] = b
-    if isinstance(data.get("has_elevator"), str):
-        b = _boolify(data["has_elevator"])
-        if b is not None: data["has_elevator"] = b
+    # Normalize booleans
+    for bool_key in ["has_basement", "has_elevator"]:
+        if isinstance(data.get(bool_key), str):
+            b = _boolify(data[bool_key])
+            if b is not None:
+                data[bool_key] = b
 
+    # Merge into state
     merged = dict(state.get("slots", {}))
     for k, v in data.items():
         if v is not None:
@@ -216,7 +225,7 @@ def calculate_node(state: ValuationState) -> ValuationState:
     mcf = float(slots.get("mcf", 1.0) or 1.0)
     pef = float(slots.get("pef", 1.0) or 1.0)
     has_elevator = bool(slots.get("has_elevator", False))
-    elevator_stops = int(slots.get("elevator_stops", 0) or 0)
+    elevator_stops = int(slots.get("elevator_stops") or 0)
 
     building = {
         "name": str(slots.get("building_name", "Building 1")),
@@ -306,7 +315,7 @@ if __name__ == "__main__":
         # Append user message
         state["messages"].append({"role": "user", "content": user})
 
-        # Only run extract_info → ask / calculate after real user input
+        # Extract info
         state = extract_info_node(state)
 
         # Decide whether to ask next question or calculate
