@@ -315,13 +315,19 @@ if __name__ == "__main__":
         # Append user message
         state["messages"].append({"role": "user", "content": user})
 
-        # Extract info
+        # Extract info from user input
         state = extract_info_node(state)
 
-        # Decide whether to ask next question or calculate
-        if missing_slots(state.get("slots", {})):
+        # Check remaining slots
+        remaining = missing_slots(state.get("slots", {}))
+
+        if remaining:
+            # Ask next missing question
             state = ask_next_question_node(state)
         else:
+            # All slots filled → calculate valuation
             state = calculate_node(state)
+            # Reset asked list to prevent further questions
+            state["asked"] = []
 
         print("Bot:", state["messages"][-1]["content"], "\n")
