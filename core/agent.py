@@ -92,6 +92,28 @@ def extract_info_node(state: ValuationState) -> ValuationState:
     if last.get("role") != "user":
         return state
 
+    # ----- Direct assignment for simple free-text slots -----
+    asked_slots = state.get("asked", [])
+    if asked_slots:
+        last_asked = asked_slots[-1]
+        # for non-choice slots, just save input directly
+        if last_asked not in {"building_category", "confirmed_grade", "gen_use", "plot_grade", "prop_town"}:
+            state["slots"][last_asked] = last.get("content", "").strip()
+            return state
+
+    # ----- Handle numbered choice answers -----
+    expected = state["slots"].get("__expected_choices__")
+    if expected:
+        slot, choices = expected
+        msg = last.get("content", "").strip()
+        if msg.isdigit():
+            idx = int(msg) - 1
+            if 0 <= idx < len(choices):
+                state["slots"][slot] = choices[idx]
+                state["slots"].pop("__expected_choices__", None)
+                return state
+
+    # ----- Fallback: try LLM JSON extraction -----
     prompt = f"""
 You are an information extraction parser for a property valuation chatbot.
 Return STRICT JSON with the following keys. If not present, use null:
@@ -115,12 +137,16 @@ Return STRICT JSON with the following keys. If not present, use null:
 User message: '{last.get("content", "")}'
 Output ONLY JSON. No commentary.
 """
-    resp = llm.invoke([{"role": "system", "content": "Return JSON only."},
-                       {"role": "user", "content": prompt}])
-    text = resp.content.strip()
     try:
+        resp = llm.invoke([{"role": "system", "content": "Return JSON only."},
+                           {"role": "user", "content": prompt}])
+        text = resp.content.strip()
         data = json.loads(text)
     except Exception:
+        # fallback: assign raw input to last asked slot
+        if asked_slots:
+            last_asked = asked_slots[-1]
+            state["slots"][last_asked] = last.get("content", "").strip()
         return state
 
     if isinstance(data.get("has_basement"), str):
@@ -154,8 +180,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     }
     if s in options_map:
         choices = options_map[s]
-        q = f"Please select {s.replace('_', ' ')} from the following options:\n" + \
-            "\n".join(f"{i+1}. {c}" for i, c in enumerate(choices))
+        q = f"Please select {s.replace('_', ' ')}:\n" + \
+            "\n".join(f"{i+1}. {c}" for i, c in enumerate(choices)) + \
+            "\n(Reply with the number)"
+        state["slots"]["__expected_choices__"] = (s, choices)
     elif s == "building_name":
         q = "What is the building name or identifier (e.g., 'Block A')?"
     elif s == "length_m":
@@ -265,11 +293,26 @@ if __name__ == "__main__":
     builder = build_graph()
     graph = builder.compile()
 
+    # 🔹 Ask the first question manually
+    state = ask_next_question_node(state)
+    print("Bot:", state["messages"][-1]["content"], "\n")
+
     while True:
         user = input("You: ")
         if user.strip().lower() in {"quit", "exit"}:
             print("👋 Goodbye!")
             break
+
+        # Append user message
         state["messages"].append({"role": "user", "content": user})
-        state = graph.invoke(state)
+
+        # Only run extract_info → ask / calculate after real user input
+        state = extract_info_node(state)
+
+        # Decide whether to ask next question or calculate
+        if missing_slots(state.get("slots", {})):
+            state = ask_next_question_node(state)
+        else:
+            state = calculate_node(state)
+
         print("Bot:", state["messages"][-1]["content"], "\n")
