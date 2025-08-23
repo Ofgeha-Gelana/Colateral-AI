@@ -25,7 +25,6 @@ VALID_CATEGORIES = [
 ]
 
 VALID_USE = ["Residential", "Commercial"]
-VALID_PLOT_GRADES = ["1st", "2nd", "3rd", "4th"]
 VALID_TOWN_CLASSES = [
     "Finfinne Border A1",
     "Surrounding Finfine B1",
@@ -49,6 +48,10 @@ MATERIAL_EXAMPLES = {
     "sanitary": "Standard, Premium, Basic"
 }
 
+# Load JSON file for automatic plot grade lookup
+with open("data/location_data.json") as f:
+    PLOT_PRICES = json.load(f)
+
 # ------------------------------
 # 2) Conversation state
 # ------------------------------
@@ -64,7 +67,8 @@ REQUIRED_SLOTS_IN_ORDER = [
     "building_name", "building_category", "length_m", "width_m",
     "num_floors", "has_basement", "is_under_construction", "incomplete_components",
     *["material_" + m for m in MATERIAL_COMPONENTS],
-    "plot_area_sqm", "prop_town", "gen_use", "plot_grade", "mcf", "pef",
+    "plot_area_sqm", "prop_town", "gen_use",  # plot_grade removed
+    "mcf", "pef",
     "has_elevator", "elevator_stops"
 ]
 
@@ -95,7 +99,28 @@ def missing_slots(slots: Dict[str, object]) -> List[str]:
     return needed
 
 # ------------------------------
-# 4) Nodes
+# 4) Automatic plot grade
+# ------------------------------
+def select_plot_grade(location: str, use_type: str, plot_area: float) -> str:
+    """
+    Automatically select plot grade based on location, use type, and plot area.
+    """
+    try:
+        town_data = PLOT_PRICES.get(location, {})
+        use_data = town_data.get(use_type, {})
+        for grade, ranges in use_data.items():
+            for range_str in ranges.keys():
+                start_str, end_str = range_str.split('-')
+                start = float(start_str)
+                end = float('inf') if end_str.lower() == "inf" else float(end_str)
+                if start <= plot_area <= end:
+                    return grade
+    except Exception:
+        pass
+    return "Average"  # default fallback
+
+# ------------------------------
+# 5) Nodes
 # ------------------------------
 def extract_info_node(state: ValuationState) -> ValuationState:
     if not state.get("messages"):
@@ -115,8 +140,8 @@ def extract_info_node(state: ValuationState) -> ValuationState:
                 state["slots"][last_asked] = b
                 return state
 
-        # Free-text slots (just save input)
-        if last_asked.startswith("material_") or last_asked not in {"building_category", "gen_use", "plot_grade", "prop_town"}:
+        # Free-text slots
+        if last_asked.startswith("material_") or last_asked not in {"building_category", "gen_use", "prop_town"}:
             state["slots"][last_asked] = last.get("content", "").strip()
             return state
 
@@ -145,7 +170,6 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     options_map = {
         "building_category": VALID_CATEGORIES,
         "gen_use": VALID_USE,
-        "plot_grade": VALID_PLOT_GRADES,
         "prop_town": VALID_TOWN_CLASSES,
     }
 
@@ -192,13 +216,11 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
 
 def calculate_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
-    # Convert boolean/number slots
     mcf = float(slots.get("mcf", 1.0) or 1.0)
     pef = float(slots.get("pef", 1.0) or 1.0)
     has_elevator = bool(slots.get("has_elevator", False))
     elevator_stops = int(slots.get("elevator_stops") or 0)
 
-    # Prepare building materials dict
     selected_materials = {m: slots.get("material_" + m, "") for m in MATERIAL_COMPONENTS}
 
     building = {
@@ -211,7 +233,7 @@ def calculate_node(state: ValuationState) -> ValuationState:
         "is_under_construction": bool(slots.get("is_under_construction", False)),
         "incomplete_components": [c.strip() for c in slots.get("incomplete_components", "").split(",") if c.strip()],
         "selected_materials": selected_materials,
-        "confirmed_grade": None,  # grade will be auto-suggested
+        "confirmed_grade": None,
         "specialized_components": {},
     }
 
@@ -219,8 +241,11 @@ def calculate_node(state: ValuationState) -> ValuationState:
         "plot_area": float(slots.get("plot_area_sqm")),
         "prop_town": str(slots.get("prop_town")),
         "gen_use": str(slots.get("gen_use")),
-        "plot_grade": str(slots.get("plot_grade")),
     }
+
+    # Auto-select plot grade
+    plot_grade = select_plot_grade(property_details["prop_town"], property_details["gen_use"], property_details["plot_area"])
+    property_details["plot_grade"] = plot_grade
 
     special_items = {"has_elevator": has_elevator, "elevator_stops": elevator_stops}
     other_costs = {
@@ -246,14 +271,14 @@ def calculate_node(state: ValuationState) -> ValuationState:
     return state
 
 # ------------------------------
-# 5) Routing / edges
+# 6) Routing / edges
 # ------------------------------
 def should_calculate(state: ValuationState) -> str:
     remaining = missing_slots(state.get("slots", {}))
     return "CALC" if not remaining else "ASK"
 
 # ------------------------------
-# 6) Build the graph
+# 7) Build the graph
 # ------------------------------
 def build_graph():
     builder = StateGraph(ValuationState)
@@ -268,7 +293,7 @@ def build_graph():
     return builder
 
 # ------------------------------
-# 7) CLI runner
+# 8) CLI runner
 # ------------------------------
 if __name__ == "__main__":
     print("\n🏗️ Property Valuation Agent (LangGraph)\nType 'quit' to exit.\n")
@@ -276,7 +301,6 @@ if __name__ == "__main__":
     builder = build_graph()
     graph = builder.compile()
 
-    # Ask first question manually
     state = ask_next_question_node(state)
     print("Bot:", state["messages"][-1]["content"], "\n")
 
