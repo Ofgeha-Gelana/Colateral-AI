@@ -6,6 +6,8 @@ from core.agent import (
     process_confirmation_node, calculate_node, 
     should_calculate, missing_slots
 )
+import datetime
+import time
 
 # Configure page
 st.set_page_config(
@@ -118,6 +120,37 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     }
     
+    .typing-indicator {
+        padding: 0.75rem 1rem;
+        border-radius: 18px 18px 18px 4px;
+        margin-right: auto;
+        max-width: 75%;
+        word-wrap: break-word;
+        border-left: 3px solid #0ea5e9;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    
+    .typing-dots {
+        display: flex;
+        gap: 0.25rem;
+    }
+    
+    .typing-dot {
+        width: 8px;
+        height: 8px;
+        background: #0ea5e9;
+        border-radius: 50%;
+        animation: typing 1.5s infinite;
+    }
+    
+    @keyframes typing {
+        0%, 100% { opacity: 0.5; }
+        50% { opacity: 1; }
+    }
+    
     /* Input area */
     .input-section {
         background: white;
@@ -191,6 +224,20 @@ st.markdown("""
     .chat-container::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
     }
+    
+    .copy-btn {
+        background: none;
+        border: none;
+        padding: 0;
+        margin-left: 0.5rem;
+        cursor: pointer;
+    }
+    
+    .message-timestamp {
+        font-size: 0.8rem;
+        color: #64748b;
+        margin-top: 0.25rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -212,18 +259,64 @@ def display_messages():
     """Display chat messages"""
     for message in st.session_state.messages:
         if message["role"] == "user":
-            st.markdown(f'<div class="message"><div class="user-message">{message["content"]}</div></div>', 
-                       unsafe_allow_html=True)
+            timestamp = message.get("timestamp", "")
+            st.markdown(f'''
+            <div class="message">
+                <div class="user-message">
+                    {message["content"]}
+                    <div class="message-timestamp">{timestamp}</div>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
         else:
             content = message["content"].replace("\n", "<br>")
-            st.markdown(f'<div class="message"><div class="bot-message">{content}</div></div>', 
-                       unsafe_allow_html=True)
+            timestamp = message.get("timestamp", "")
+            message_id = f"msg_{hash(content)}"
+            st.markdown(f'''
+            <div class="message">
+                <div class="bot-message">
+                    <span id="{message_id}">{content}</span>
+                    <button class="copy-btn" onclick="copyToClipboard('{message_id}')">📋</button>
+                    <div class="message-timestamp">{timestamp}</div>
+                </div>
+            </div>
+            <script>
+                function copyToClipboard(messageId) {{
+                    const text = document.querySelector(`#${{messageId}}`).innerText;
+                    navigator.clipboard.writeText(text);
+                }}
+            </script>
+            ''', unsafe_allow_html=True)
+
+def show_typing_indicator():
+    """Show typing indicator"""
+    st.markdown('''
+    <div class="message">
+        <div class="typing-indicator">
+            <span>Assistant is typing</span>
+            <div class="typing-dots">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+            </div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
 
 def process_input(user_input):
     """Process user input through the agent"""
-    # Add user message
-    st.session_state.messages.append({"role": "user", "content": user_input})
+    # Add user message with timestamp
+    timestamp = datetime.datetime.now().strftime("%H:%M")
+    st.session_state.messages.append({"role": "user", "content": user_input, "timestamp": timestamp})
     st.session_state.agent_state["messages"].append({"role": "user", "content": user_input})
+    
+    # Show typing indicator
+    typing_placeholder = st.empty()
+    with typing_placeholder.container():
+        show_typing_indicator()
+    
+    # Small delay for UX
+    time.sleep(0.5)
     
     # Process through agent
     if "_confirmation" in st.session_state.agent_state.get("asked", []):
@@ -249,10 +342,14 @@ def process_input(user_input):
             st.session_state.agent_state = calculate_node(st.session_state.agent_state)
             st.session_state.agent_state["asked"] = []
     
-    # Add bot response
+    # Clear typing indicator
+    typing_placeholder.empty()
+    
+    # Add bot response with timestamp
     if st.session_state.agent_state.get("messages"):
         bot_response = st.session_state.agent_state["messages"][-1]["content"]
-        st.session_state.messages.append({"role": "assistant", "content": bot_response})
+        timestamp = datetime.datetime.now().strftime("%H:%M")
+        st.session_state.messages.append({"role": "assistant", "content": bot_response, "timestamp": timestamp})
 
 def reset_chat():
     """Reset the chat session"""
