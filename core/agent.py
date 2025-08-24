@@ -378,33 +378,100 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     state.setdefault("asked", []).append(s)
     return state
 
-def _collect_selected_materials(slots: Dict[str, object], category: str) -> Dict[str, str]:
-    comps = get_material_components_for_category(category)
-    out: Dict[str, str] = {}
-    for comp in comps:
-        out[comp] = str(slots.get(f"material__{comp}", "")).strip()
-    return out
+def summary_confirmation_node(state: ValuationState) -> ValuationState:
+    """Show summary of all collected data and ask for confirmation."""
+    slots = state.get("slots", {})
+    messages = state.get("messages", [])
+    asked = state.get("asked", [])
+    
+    # Build summary
+    building_name = slots.get("building_name", "Unknown")
+    category = slots.get("building_category", "Unknown")
+    length = slots.get("length_m", "0")
+    width = slots.get("width_m", "0")
+    num_floors = slots.get("num_floors", "1")
+    has_basement = "Yes" if slots.get("has_basement") == "true" else "No"
+    plot_area = slots.get("plot_area_sqm", "0")
+    prop_town = slots.get("prop_town", "Unknown")
+    gen_use = slots.get("gen_use", "Unknown")
+    
+    # Collect materials
+    materials = []
+    for key, value in slots.items():
+        if key.startswith("material__"):
+            material_type = key.replace("material__", "").replace("_", " ").title()
+            materials.append(f"  - {material_type}: {value}")
+    
+    materials_text = "\n".join(materials) if materials else "  - No materials specified"
+    
+    summary = f"""
+📋 **VALUATION SUMMARY**
 
-def _collect_specialized_components(slots: Dict[str, object], category: str) -> Dict[str, float | int]:
-    spec = {}
-    for key in CATEGORY_SPECIAL_SLOTS.get(category, []):
-        val = slots.get(key)
-        if val is None or val == "":
-            continue
-        # try numeric conversion where reasonable
-        try:
-            if key.startswith("num_"):
-                spec[key] = int(val)
-            else:
-                spec[key] = float(val)
-        except Exception:
-            # leave as string if conversion fails (but engine expects numbers)
-            spec[key] = val
-    return spec
+🏠 **Building Details:**
+  - Name: {building_name}
+  - Type: {category}
+  - Dimensions: {length}m x {width}m
+  - Floors: {num_floors}
+  - Basement: {has_basement}
+
+📍 **Location:**
+  - Plot Area: {plot_area} sqm
+  - Town: {prop_town}
+  - Use: {gen_use}
+
+🔧 **Materials:**
+{materials_text}
+
+💰 **Financial Factors:**
+  - MCF: {slots.get("mcf", "1.0")}
+  - PEF: {slots.get("pef", "1.0")}
+
+Do you want to proceed with the valuation? (yes/no)
+"""
+    
+    messages.append({"role": "assistant", "content": summary})
+    asked.append("_confirmation")
+    
+    return {"messages": messages, "slots": slots, "asked": asked}
+
+def process_confirmation_node(state: ValuationState) -> ValuationState:
+    """Process the user's confirmation response."""
+    slots = state.get("slots", {})
+    messages = state.get("messages", [])
+    asked = state.get("asked", [])
+    
+    if not messages:
+        return state
+    
+    user_response = messages[-1]["content"].strip().lower()
+    
+    if user_response in ["yes", "y", "proceed", "confirm"]:
+        slots["_confirmed"] = True
+        messages.append({"role": "assistant", "content": "✅ Proceeding with valuation calculation..."})
+    elif user_response in ["no", "n", "cancel", "stop"]:
+        messages.append({"role": "assistant", "content": "❌ Valuation cancelled. Type 'quit' to exit or start over."})
+        # Reset confirmation to allow restart
+        slots["_confirmed"] = False
+    else:
+        messages.append({"role": "assistant", "content": "Please respond with 'yes' to proceed or 'no' to cancel."})
+        # Keep asking for confirmation
+        return {"messages": messages, "slots": slots, "asked": asked}
+    
+    return {"messages": messages, "slots": slots, "asked": asked}
+
+def should_calculate(state: ValuationState) -> str:
+    slots = state.get("slots", {})
+    remaining = missing_slots(slots)
+    if remaining:
+        return "ASK"
+    else:
+        # Check if we need confirmation
+        if not slots.get("_confirmed", False):
+            return "CONFIRM"
+        return "CALC"
 
 def calculate_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
-
     # Scalars / factors
     mcf = float(slots.get("mcf", 1.0) or 1.0)
     pef = float(slots.get("pef", 1.0) or 1.0)
@@ -472,18 +539,42 @@ def calculate_node(state: ValuationState) -> ValuationState:
     state["messages"].append({"role": "assistant", "content": result_text})
     return state
 
-def should_calculate(state: ValuationState) -> str:
-    remaining = missing_slots(state.get("slots", {}))
-    return "CALC" if not remaining else "ASK"
+def _collect_selected_materials(slots: Dict[str, object], category: str) -> Dict[str, str]:
+    comps = get_material_components_for_category(category)
+    out: Dict[str, str] = {}
+    for comp in comps:
+        out[comp] = str(slots.get(f"material__{comp}", "")).strip()
+    return out
+
+def _collect_specialized_components(slots: Dict[str, object], category: str) -> Dict[str, float | int]:
+    spec = {}
+    for key in CATEGORY_SPECIAL_SLOTS.get(category, []):
+        val = slots.get(key)
+        if val is None or val == "":
+            continue
+        # try numeric conversion where reasonable
+        try:
+            if key.startswith("num_"):
+                spec[key] = int(val)
+            else:
+                spec[key] = float(val)
+        except Exception:
+            # leave as string if conversion fails (but engine expects numbers)
+            spec[key] = val
+    return spec
 
 def build_graph():
     builder = StateGraph(ValuationState)
     builder.add_node("extract_info", extract_info_node)
     builder.add_node("ask", ask_next_question_node)
+    builder.add_node("summary_confirmation", summary_confirmation_node)
+    builder.add_node("process_confirmation", process_confirmation_node)
     builder.add_node("calculate", calculate_node)
     builder.add_edge(START, "extract_info")
-    builder.add_conditional_edges("extract_info", should_calculate, {"ASK": "ask", "CALC": "calculate"})
+    builder.add_conditional_edges("extract_info", should_calculate, {"ASK": "ask", "CONFIRM": "summary_confirmation", "CALC": "calculate"})
     builder.add_edge("ask", "extract_info")
+    builder.add_edge("summary_confirmation", "process_confirmation")
+    builder.add_conditional_edges("process_confirmation", lambda state: "CONFIRM" if state["slots"].get("_confirmed", False) else "ASK", {"ASK": "ask", "CONFIRM": "calculate"})
     builder.add_edge("calculate", END)
     builder.config = {"recursion_limit": 100}
     return builder
@@ -509,13 +600,34 @@ if __name__ == "__main__":
             break
 
         state["messages"].append({"role": "user", "content": user})
-        state = extract_info_node(state)
-
-        remaining = missing_slots(state.get("slots", {}))
-        if remaining:
-            state = ask_next_question_node(state)
+        
+        # Check if we're in confirmation mode
+        if "_confirmation" in state.get("asked", []):
+            state = process_confirmation_node(state)
+            # After processing confirmation, check what to do next
+            if state["slots"].get("_confirmed", False):
+                state = calculate_node(state)
+                state["asked"] = []
+                # Reset confirmation for next run
+                state["slots"]["_confirmed"] = False
+            elif state["slots"].get("_confirmed") == False:
+                # User cancelled, restart the questioning process
+                remaining = missing_slots(state.get("slots", {}))
+                if remaining:
+                    state = ask_next_question_node(state)
         else:
-            state = calculate_node(state)
-            state["asked"] = []
+            # Extract info from user input first
+            state = extract_info_node(state)
+            
+            # Use the graph to determine next action
+            result = should_calculate(state)
+            
+            if result == "ASK":
+                state = ask_next_question_node(state)
+            elif result == "CONFIRM":
+                state = summary_confirmation_node(state)
+            elif result == "CALC":
+                state = calculate_node(state)
+                state["asked"] = []
 
         print("Bot:", state["messages"][-1]["content"], "\n")

@@ -37,4 +37,4 @@ langchain
 python-dotenv>=1.0.0
 google-auth>=2.23
 rich>=13.4.2
-
+langchain-google-genai>=0.1.0
