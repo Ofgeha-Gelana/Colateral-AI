@@ -159,35 +159,54 @@ st.markdown("""
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     }
     
-    .stTextInput > div > div > input {
-        border-radius: 24px;
-        border: 2px solid #e2e8f0;
-        padding: 0.75rem 1rem;
-        font-size: 0.95rem;
-        transition: all 0.2s ease;
+    div[data-testid="stTextInput"] > div > div > input,
+    .stTextInput input,
+    input[type="text"] {
+        border-radius: 24px !important;
+        border: 2px solid #e2e8f0 !important;
+        padding: 0.75rem 1rem !important;
+        font-size: 0.95rem !important;
+        transition: all 0.2s ease !important;
+        background-color: #f8fafc !important;
+        color: #334155 !important;
     }
     
-    .stTextInput > div > div > input:focus {
-        border-color: #0ea5e9;
-        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
-        outline: none;
+    div[data-testid="stTextInput"] > div > div > input:focus,
+    .stTextInput input:focus,
+    input[type="text"]:focus {
+        border-color: #0ea5e9 !important;
+        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1) !important;
+        outline: none !important;
+        background-color: white !important;
     }
     
-    .stButton > button {
-        background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-        color: white;
-        border: none;
-        border-radius: 24px;
-        padding: 0.75rem 1.5rem;
-        font-weight: 600;
-        font-size: 0.9rem;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+    div[data-testid="stTextInput"] > div > div > input::placeholder,
+    .stTextInput input::placeholder,
+    input[type="text"]::placeholder {
+        color: #94a3b8 !important;
+        font-style: italic !important;
     }
     
-    .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4);
+    div[data-testid="stButton"] > button,
+    .stButton button,
+    button[kind="primary"] {
+        background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 24px !important;
+        padding: 0.75rem 1.5rem !important;
+        font-weight: 600 !important;
+        font-size: 0.9rem !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3) !important;
+    }
+    
+    div[data-testid="stButton"] > button:hover,
+    .stButton button:hover,
+    button[kind="primary"]:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4) !important;
+        background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%) !important;
     }
     
     /* Reset button */
