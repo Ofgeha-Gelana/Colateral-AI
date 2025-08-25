@@ -101,6 +101,90 @@ def get_material_components_for_category(category: str) -> List[str]:
     # Fallback if mapping missing
     return ["foundation", "roof", "floor", "ceiling", "metal work", "sanitary"]
 
+# Base required slots for regular building categories (with generic building questions)
+BASE_REQUIRED_SLOTS_IN_ORDER: List[str] = [
+    "building_name",
+    "building_category",
+    "length_m",
+    "width_m", 
+    "num_floors",
+    "has_basement",
+    "is_under_construction",
+    "incomplete_components",  # only used when is_under_construction=True
+    "plot_area_sqm",
+    "prop_town",
+    "gen_use",
+    "mcf",
+    "pef",
+    "has_elevator",
+    "elevator_stops",         # only used when has_elevator=True
+]
+
+# Base required slots for special categories (without generic building questions)
+SPECIAL_CATEGORY_BASE_SLOTS: List[str] = [
+    "building_name",
+    "building_category", 
+    "plot_area_sqm",
+    "prop_town",
+    "gen_use",
+    "mcf",
+    "pef",
+    "has_elevator",
+    "elevator_stops",         # only used when has_elevator=True
+]
+
+# Categories that use specialized components instead of generic building parameters
+SPECIAL_CATEGORIES = ["Fuel Station", "Coffee Washing Site", "Green House"]
+
+def _boolify(text: str) -> Optional[bool]:
+    t = text.strip().lower()
+    if t in {"yes", "y", "true", "t", "1"}: return True
+    if t in {"no", "n", "false", "f", "0"}: return False
+    return None
+
+def format_choices_with_examples(choices: List[str], examples_map: Dict[str, str]) -> str:
+    lines = []
+    for i, c in enumerate(choices, start=1):
+        ex = examples_map.get(c)
+        if ex:
+            lines.append(f"{i}. {c} — {ex}")
+        else:
+            lines.append(f"{i}. {c}")
+    return "\n".join(lines)
+
+def current_required_slots(slots: Dict[str, object]) -> List[str]:
+    """
+    Build the final required slot list dynamically:
+    - For special categories: use special base slots + specialized components + materials
+    - For regular categories: use regular base slots + materials + specialized components
+    """
+    cat = slots.get("building_category")
+    
+    # Determine which base slots to use based on category
+    if isinstance(cat, str) and cat in SPECIAL_CATEGORIES:
+        # Special categories skip generic building questions
+        req = list(SPECIAL_CATEGORY_BASE_SLOTS)
+    else:
+        # Regular categories use full base slots including length/width/floors
+        req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
+
+    if isinstance(cat, str) and cat:
+        # materials for this category
+        for comp in get_material_components_for_category(cat):
+            req.append(f"material__{comp}")  # double underscore to avoid collision with generic names
+        # specialized slots for category
+        for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
+            req.append(sp)
+
+    # De-duplicate while preserving order
+    seen = set()
+    final: List[str] = []
+    for r in req:
+        if r not in seen:
+            final.append(r)
+            seen.add(r)
+    return final
+
 # ------------------------------
 # 4) Category-specific specialized components & examples
 #    (names MUST match keys expected by calculation_engine.* helpers)
@@ -162,68 +246,6 @@ class ValuationState(TypedDict):
 
 def initial_state() -> ValuationState:
     return {"messages": [], "slots": {}, "asked": []}
-
-# Base required slots (category-specific materials + special slots are added dynamically)
-BASE_REQUIRED_SLOTS_IN_ORDER: List[str] = [
-    "building_name",
-    "building_category",
-    "length_m",
-    "width_m",
-    "num_floors",
-    "has_basement",
-    "is_under_construction",
-    "incomplete_components",  # only used when is_under_construction=True
-    "plot_area_sqm",
-    "prop_town",
-    "gen_use",
-    "mcf",
-    "pef",
-    "has_elevator",
-    "elevator_stops",         # only used when has_elevator=True
-]
-
-def _boolify(text: str) -> Optional[bool]:
-    t = text.strip().lower()
-    if t in {"yes", "y", "true", "t", "1"}: return True
-    if t in {"no", "n", "false", "f", "0"}: return False
-    return None
-
-def format_choices_with_examples(choices: List[str], examples_map: Dict[str, str]) -> str:
-    lines = []
-    for i, c in enumerate(choices, start=1):
-        ex = examples_map.get(c)
-        if ex:
-            lines.append(f"{i}. {c} — {ex}")
-        else:
-            lines.append(f"{i}. {c}")
-    return "\n".join(lines)
-
-def current_required_slots(slots: Dict[str, object]) -> List[str]:
-    """
-    Build the final required slot list dynamically:
-    - base slots
-    - materials for the chosen category (from material_mappings.json)
-    - category specialized slots (e.g., fuel station components)
-    """
-    req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
-
-    cat = slots.get("building_category")
-    if isinstance(cat, str) and cat:
-        # materials for this category
-        for comp in get_material_components_for_category(cat):
-            req.append(f"material__{comp}")  # double underscore to avoid collision with generic names
-        # specialized slots for category
-        for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
-            req.append(sp)
-
-    # De-duplicate while preserving order
-    seen = set()
-    final: List[str] = []
-    for r in req:
-        if r not in seen:
-            final.append(r)
-            seen.add(r)
-    return final
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
     needed = [s for s in current_required_slots(slots) if s not in slots]
@@ -387,10 +409,6 @@ def summary_confirmation_node(state: ValuationState) -> ValuationState:
     # Build summary
     building_name = slots.get("building_name", "Unknown")
     category = slots.get("building_category", "Unknown")
-    length = slots.get("length_m", "0")
-    width = slots.get("width_m", "0")
-    num_floors = slots.get("num_floors", "1")
-    has_basement = "Yes" if slots.get("has_basement") == "true" else "No"
     plot_area = slots.get("plot_area_sqm", "0")
     prop_town = slots.get("prop_town", "Unknown")
     gen_use = slots.get("gen_use", "Unknown")
@@ -404,15 +422,44 @@ def summary_confirmation_node(state: ValuationState) -> ValuationState:
     
     materials_text = "\n".join(materials) if materials else "  - No materials specified"
     
-    summary = f"""
-📋 **VALUATION SUMMARY**
-
-🏠 **Building Details:**
+    # Build building details section based on category type
+    if category in SPECIAL_CATEGORIES:
+        # For special categories, show specialized components instead of generic dimensions
+        building_details = f"""🏠 **Building Details:**
+  - Name: {building_name}
+  - Type: {category}"""
+        
+        # Add specialized components for special categories
+        specialized_components = []
+        for key, value in slots.items():
+            if key in CATEGORY_SPECIAL_SLOTS.get(category, []):
+                component_name = key.replace("_", " ").title()
+                if key.startswith("num_"):
+                    specialized_components.append(f"  - {component_name}: {value}")
+                else:
+                    unit = "sqm" if "area" in key else ("km" if "km" in key else ("m" if any(x in key for x in ["length", "depth"]) else ""))
+                    specialized_components.append(f"  - {component_name}: {value} {unit}".strip())
+        
+        if specialized_components:
+            building_details += "\n\n� **Specialized Components:**\n" + "\n".join(specialized_components)
+    else:
+        # For regular categories, show traditional building dimensions
+        length = slots.get("length_m", "0")
+        width = slots.get("width_m", "0")
+        num_floors = slots.get("num_floors", "1")
+        has_basement = "Yes" if slots.get("has_basement") == "true" else "No"
+        
+        building_details = f"""🏠 **Building Details:**
   - Name: {building_name}
   - Type: {category}
   - Dimensions: {length}m x {width}m
   - Floors: {num_floors}
-  - Basement: {has_basement}
+  - Basement: {has_basement}"""
+    
+    summary = f"""
+📋 **VALUATION SUMMARY**
+
+{building_details}
 
 📍 **Location:**
   - Plot Area: {plot_area} sqm
@@ -487,9 +534,9 @@ def calculate_node(state: ValuationState) -> ValuationState:
     building = {
         "name": str(slots.get("building_name", "Building 1")),
         "category": category,
-        "length": float(slots.get("length_m")),
-        "width": float(slots.get("width_m")),
-        "num_floors": int(slots.get("num_floors")),
+        "length": float(slots.get("length_m", 0)),  # Default to 0 for special categories
+        "width": float(slots.get("width_m", 0)),   # Default to 0 for special categories
+        "num_floors": int(slots.get("num_floors", 1)),  # Default to 1 for special categories
         "has_basement": bool(slots.get("has_basement", False)),
         "is_under_construction": bool(slots.get("is_under_construction", False)),
         "incomplete_components": [
