@@ -174,23 +174,63 @@ def format_choices_with_examples(choices: List[str], examples_map: Dict[str, str
             lines.append(f"{i}. {c}")
     return "\n".join(lines)
 
+
 def current_required_slots(slots: Dict[str, object]) -> List[str]:
+    """
+    Determine which slots (questions) need to be asked for the given building category.
+
+    - Multi-Story: ask floors, elevator, number of sections, dimensions per section
+    - Higher Villa: ask number of sections, dimensions per section (no floors/elevator)
+    - Apartment / Condominium: ask number of sections, only total area (skip floors/elevator/length/width)
+    - Special categories (Fuel Station, Coffee Site, Green House): skip generic building questions
+    """
     cat = slots.get("building_category")
+
+    # Base slots: special categories skip generic questions
     if isinstance(cat, str) and cat in SPECIAL_CATEGORIES:
         req = list(SPECIAL_CATEGORY_BASE_SLOTS)
     else:
         req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
-        # Apartments / Condos do not need sections/length/width
-        if cat == "Apartment / Condominium":
-            req = [s for s in req if s not in {"num_sections","section_dimensions"}]
 
-    # materials
+        if cat == "Apartment / Condominium":
+            # Skip length, width, floors, elevator questions
+            req = [s for s in req if s not in {
+                "length_m",
+                "width_m",
+                "num_floors",
+                "has_elevator",
+                "elevator_stops"
+            }]
+            # Keep sections (for total area calculation)
+            if "num_sections" not in req:
+                req.append("num_sections")
+            if "section_dimensions" not in req:
+                req.append("section_dimensions")  # only area per section
+        elif cat == "Multi-Story Building":
+            # Ask floors + elevator + sections
+            if "num_floors" not in req:
+                req.append("num_floors")
+            if "has_elevator" not in req:
+                req.append("has_elevator")
+            if "num_sections" not in req:
+                req.append("num_sections")
+            if "section_dimensions" not in req:
+                req.append("section_dimensions")
+        else:
+            # Higher Villa and others: sections only
+            if "num_sections" not in req:
+                req.append("num_sections")
+            if "section_dimensions" not in req:
+                req.append("section_dimensions")
+
+    # Add materials
     if isinstance(cat, str) and cat:
         for comp in get_material_components_for_category(cat):
             req.append(f"material__{comp}")
         for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
             req.append(sp)
 
+    # Deduplicate while preserving order
     seen = set()
     final: List[str] = []
     for r in req:
@@ -198,6 +238,7 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
             final.append(r)
             seen.add(r)
     return final
+
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
     needed = [s for s in current_required_slots(slots) if s not in slots]
