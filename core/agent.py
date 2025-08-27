@@ -1,4 +1,3 @@
-# core/agent.py
 from __future__ import annotations
 
 import json
@@ -14,7 +13,7 @@ from core.tools import property_valuation_tool
 load_dotenv()
 
 # ------------------------------
-# 1) Model (kept for parity; not used directly in CLI loop)
+# 1) Model
 # ------------------------------
 llm = init_chat_model("google_genai:gemini-2.0-flash")
 
@@ -59,7 +58,6 @@ TOWN_CLASS_EXAMPLES = {
     "Tertiary Towns E2": "Remote villages, few houses, mostly farmland",
 }
 
-# Helpful examples for generic material questions (fallbacks; exact component list comes from JSON)
 MATERIAL_EXAMPLES = {
     "foundation": "Reinforced concrete; Stone; Mud block",
     "roof": "Corrugated iron; Tile; Concrete slab",
@@ -70,153 +68,64 @@ MATERIAL_EXAMPLES = {
 }
 
 # ------------------------------
-# 3) Load JSON data needed by the agent
+# 3) Load JSON data
 # ------------------------------
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
 
 def _load_json(filename: str) -> dict:
     path = os.path.join(DATA_DIR, filename)
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-# Used for automatic plot-grade selection
-PLOT_PRICES = _load_json("location_data.json")
 
-# Used to know which material components to ask per building category
-# Structure expected: { "<Category>": { "<component>": { "<material substring>": "<grade>", ... }, ... }, ... }
+PLOT_PRICES = _load_json("location_data.json")
 MATERIAL_MAPPINGS = _load_json("material_mappings.json")
 
-# (You already load minimum_completion_stages.json inside calculation engine;
-# no direct agent use is required to enforce thresholds.)
 
 def get_material_components_for_category(category: str) -> List[str]:
-    """
-    Extract component names from material_mappings.json for the given category.
-    Falls back to a common, sensible set if category not present.
-    """
     cat_map = MATERIAL_MAPPINGS.get(category, {})
     comps = list(cat_map.keys())
-    if comps:
-        return comps
-    # Fallback if mapping missing
-    return ["foundation", "roof", "floor", "ceiling", "metal work", "sanitary"]
+    return comps if comps else ["foundation", "roof", "floor", "ceiling", "metal work", "sanitary"]
 
-# Base required slots for regular building categories (with generic building questions)
+
+# ------------------------------
+# 4) Slots configuration
+# ------------------------------
 BASE_REQUIRED_SLOTS_IN_ORDER: List[str] = [
     "building_name",
     "building_category",
-    "length_m",
-    "width_m", 
+    "num_sections",
+    "section_dimensions",
     "num_floors",
     "has_basement",
     "is_under_construction",
-    "incomplete_components",  # only used when is_under_construction=True
+    "incomplete_components",
     "plot_area_sqm",
     "prop_town",
     "gen_use",
     "mcf",
     "pef",
     "has_elevator",
-    "elevator_stops",         # only used when has_elevator=True
+    "elevator_stops",
 ]
 
-# Base required slots for special categories (without generic building questions)
 SPECIAL_CATEGORY_BASE_SLOTS: List[str] = [
-    "building_name",
-    "building_category", 
-    "plot_area_sqm",
-    "prop_town",
-    "gen_use",
-    "mcf",
-    "pef",
-    "has_elevator",
-    "elevator_stops",         # only used when has_elevator=True
+    "prop_town"  # Only property location is required for special categories
 ]
 
-# Categories that use specialized components instead of generic building parameters
 SPECIAL_CATEGORIES = ["Fuel Station", "Coffee Washing Site", "Green House"]
 
-def _boolify(text: str) -> Optional[bool]:
-    t = text.strip().lower()
-    if t in {"yes", "y", "true", "t", "1"}: return True
-    if t in {"no", "n", "false", "f", "0"}: return False
-    return None
-
-def format_choices_with_examples(choices: List[str], examples_map: Dict[str, str]) -> str:
-    lines = []
-    for i, c in enumerate(choices, start=1):
-        ex = examples_map.get(c)
-        if ex:
-            lines.append(f"{i}. {c} — {ex}")
-        else:
-            lines.append(f"{i}. {c}")
-    return "\n".join(lines)
-
-def current_required_slots(slots: Dict[str, object]) -> List[str]:
-    """
-    Build the final required slot list dynamically:
-    - For special categories: use special base slots + specialized components + materials
-    - For regular categories: use regular base slots + materials + specialized components
-    """
-    cat = slots.get("building_category")
-    
-    # Determine which base slots to use based on category
-    if isinstance(cat, str) and cat in SPECIAL_CATEGORIES:
-        # Special categories skip generic building questions
-        req = list(SPECIAL_CATEGORY_BASE_SLOTS)
-    else:
-        # Regular categories use full base slots including length/width/floors
-        req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
-
-    if isinstance(cat, str) and cat:
-        # materials for this category
-        for comp in get_material_components_for_category(cat):
-            req.append(f"material__{comp}")  # double underscore to avoid collision with generic names
-        # specialized slots for category
-        for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
-            req.append(sp)
-
-    # De-duplicate while preserving order
-    seen = set()
-    final: List[str] = []
-    for r in req:
-        if r not in seen:
-            final.append(r)
-            seen.add(r)
-    return final
-
-# ------------------------------
-# 4) Category-specific specialized components & examples
-#    (names MUST match keys expected by calculation_engine.* helpers)
-# ------------------------------
 CATEGORY_SPECIAL_SLOTS: Dict[str, List[str]] = {
-    # Buildings valued via building rates (no special slots needed here)
     "Higher Villa": [],
     "Multi-Story Building": [],
     "Apartment / Condominium": [],
     "MPH & Factory Building": [],
-
-    # Specialized categories with their own engines:
-    "Fuel Station": [
-        "site_preparation_area",  # sqm
-        "forecourt_area",         # sqm
-        "canopy_area",            # sqm
-        "num_pump_islands",       # count
-        "num_ugt_30m3",           # count
-        "num_ugt_50m3",           # count
-    ],
-    "Coffee Washing Site": [
-        "cherry_hopper_area",         # sqm
-        "fermentation_tanks_area",    # sqm
-        "washing_channels_length",    # m
-        "coffee_drier_area",          # sqm
-    ],
-    "Green House": [
-        "greenhouse_area",       # sqm
-        "in_farm_road_km",       # km
-        "borehole_depth",        # m
-        "land_preparation_area", # sqm
-    ],
+    "Fuel Station": ["site_preparation_area", "forecourt_area", "canopy_area", "num_pump_islands", "num_ugt_30m3",
+                     "num_ugt_50m3"],
+    "Coffee Washing Site": ["cherry_hopper_area", "fermentation_tanks_area", "washing_channels_length",
+                            "coffee_drier_area"],
+    "Green House": ["greenhouse_area", "in_farm_road_km", "borehole_depth", "land_preparation_area"],
 }
 
 SPECIAL_SLOT_EXAMPLES: Dict[str, str] = {
@@ -236,39 +145,426 @@ SPECIAL_SLOT_EXAMPLES: Dict[str, str] = {
     "land_preparation_area": "e.g., 8000 (sqm)",
 }
 
+
 # ------------------------------
-# 5) Conversation State
+# 5) Conversation state
 # ------------------------------
 class ValuationState(TypedDict):
     messages: List[Dict]
     slots: Dict[str, object]
     asked: List[str]
 
+
 def initial_state() -> ValuationState:
     return {"messages": [], "slots": {}, "asked": []}
+
+
+def _boolify(text: str) -> Optional[bool]:
+    t = text.strip().lower()
+    if t in {"yes", "y", "true", "t", "1"}:
+        return True
+    if t in {"no", "n", "false", "f", "0"}:
+        return False
+    return None
+
+
+def format_choices_with_examples(choices: List[str], examples_map: Dict[str, str]) -> str:
+    lines = []
+    for i, c in enumerate(choices, start=1):
+        ex = examples_map.get(c)
+        if ex:
+            lines.append(f"{i}. {c} — {ex}")
+        else:
+            lines.append(f"{i}. {c}")
+    return "\n".join(lines)
+
+
+def current_required_slots(slots: Dict[str, object]) -> List[str]:
+    cat = slots.get("building_category")
+    if isinstance(cat, str) and cat in SPECIAL_CATEGORIES:
+        req = list(SPECIAL_CATEGORY_BASE_SLOTS)
+    else:
+        req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
+        if cat == "Apartment / Condominium":
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
+        elif cat in {"Higher Villa", "MPH & Factory Building"}:
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
+
+    if isinstance(cat, str) and cat:
+        for comp in get_material_components_for_category(cat):
+            req.append(f"material__{comp}")
+        for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
+            req.append(sp)
+
+    seen = set()
+    final: List[str] = []
+    for r in req:
+        if r not in seen:
+            final.append(r)
+            seen.add(r)
+    return final
+
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
     needed = [s for s in current_required_slots(slots) if s not in slots]
 
-    # Skip elevator_stops if has_elevator = False
     if "has_elevator" in slots and slots.get("has_elevator") is False:
         needed = [s for s in needed if s != "elevator_stops"]
-
-    # Skip incomplete_components if not under construction
     if "is_under_construction" in slots and slots.get("is_under_construction") is False:
         needed = [s for s in needed if s != "incomplete_components"]
 
+    if "section_dimensions" in needed:
+        if "section_index" in slots and slots.get("section_index", 0) < int(slots.get("num_sections", 1)):
+            needed.remove("section_dimensions")
+
     return needed
 
+
+def ask_next_question_node(state: ValuationState) -> ValuationState:
+    slots = state.get("slots", {})
+    asked = set(state.get("asked", []))
+    remaining = [s for s in missing_slots(slots) if s not in asked]
+
+    # Handle the case where we're in the middle of collecting section dimensions
+    if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
+        s = "section_dimensions"
+    elif not remaining:
+        return state
+    else:
+        s = remaining[0]
+
+    cat = slots.get("building_category")
+    
+    # For special categories, skip directly to their special slots after basic info
+    if isinstance(cat, str) and cat in SPECIAL_CATEGORIES and s not in SPECIAL_CATEGORY_BASE_SLOTS + CATEGORY_SPECIAL_SLOTS.get(cat, []):
+        next_special = next((slot for slot in CATEGORY_SPECIAL_SLOTS.get(cat, []) if slot not in slots), None)
+        if next_special:
+            s = next_special
+
+    options_map = {
+        "building_category": VALID_CATEGORIES,
+        "gen_use": VALID_USE,
+        "prop_town": VALID_TOWN_CLASSES,
+    }
+
+    label_map = {
+        "building_name": "building name",
+        "num_floors": "number of floors",
+        "has_basement": "Does the building have a basement?",
+        "is_under_construction": "Is the building under construction?",
+        "incomplete_components": "List incomplete components",
+        "plot_area_sqm": "plot area (sqm)",
+        "mcf": "Market Condition Factor (MCF)",
+        "pef": "Property Enhancement Factor (PEF)",
+        "has_elevator": "Is there an elevator?",
+        "elevator_stops": "How many elevator stops?",
+        "num_sections": "How many sections does the building have?",
+    }
+
+    generic_examples = {
+        "building_name": "e.g., Villa Sunshine",
+        "num_floors": "e.g., 3",
+        "incomplete_components": "e.g., Foundation, Roof (or leave empty)",
+        "plot_area_sqm": "e.g., 450",
+        "mcf": "Reply 1.0 if unsure",
+        "pef": "Reply 1.0 if unsure",
+        "elevator_stops": "e.g., 5",
+    }
+
+    if s in options_map:
+        choices = options_map[s]
+        if s == "prop_town":
+            body = format_choices_with_examples(choices, TOWN_CLASS_EXAMPLES)
+        else:
+            body = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(choices))
+        q = f"Please select {s.replace('_', ' ')}:\n{body}\n(Reply with the number)"
+        state["slots"]["__expected_choices__"] = (s, choices)
+    elif s.startswith("material__"):
+        comp = s.split("__", 1)[1]
+        ex = MATERIAL_EXAMPLES.get(comp.lower(), "describe the material clearly")
+        q = f"Enter the selected material for {comp} (e.g., {ex}):"
+    elif s in SPECIAL_SLOT_EXAMPLES:
+        label = s.replace("_", " ")
+        q = f"Enter {label} ({SPECIAL_SLOT_EXAMPLES[s]}):"
+    elif s == "section_dimensions":
+        if "section_dimensions" not in slots:
+            slots["section_dimensions"] = []
+        if "section_index" not in slots:
+            slots["section_index"] = 0
+            # Only initialize awaiting_width for non-Apartment/Condominium buildings
+            if cat != "Apartment / Condominium":
+                slots["awaiting_width"] = False
+
+        idx = slots["section_index"]
+
+        if cat == "Apartment / Condominium":
+            q = f"Enter area of section {idx + 1} in sqm (e.g., 50):"
+        else:
+            if slots.get("awaiting_width", False):
+                q = f"Enter width of section {idx + 1} in meters (e.g., 5):"
+            else:
+                q = f"Enter length of section {idx + 1} in meters (e.g., 10):"
+    elif s in label_map:
+        label = label_map[s]
+        ex = generic_examples.get(s)
+        if s in {"has_basement", "is_under_construction", "has_elevator"}:
+            q = f"{label} (yes/no)"
+        else:
+            q = f"Enter {label}{f' ({ex})' if ex else ''}:"
+    else:
+        q = f"Please provide the value for: {s}"
+
+    state["messages"].append({"role": "assistant", "content": q})
+    state.setdefault("asked", []).append(s)
+    return state
+
+
 # ------------------------------
-# 6) Plot grade auto-selection
+# 6) Info extraction node
 # ------------------------------
+def extract_info_node(state: ValuationState) -> ValuationState:
+    if not state.get("messages"):
+        return state
+    last = state["messages"][-1]
+    if last.get("role") != "user":
+        return state
+
+    asked_slots = state.get("asked", [])
+    if not asked_slots:
+        return state
+    last_asked = asked_slots[-1]
+    content = last.get("content", "").strip()
+
+    if last_asked in {"has_basement", "has_elevator", "is_under_construction"}:
+        b = _boolify(content)
+        if b is not None:
+            state["slots"][last_asked] = b
+        else:
+            state["messages"].append(
+                {"role": "assistant", "content": "I couldn't understand that. Please reply with 'yes' or 'no'."})
+        return state
+
+    expected = state["slots"].get("__expected_choices__")
+    if expected:
+        slot, choices = expected
+        if content.isdigit():
+            idx = int(content) - 1
+            if 0 <= idx < len(choices):
+                state["slots"][slot] = choices[idx]
+                state["slots"].pop("__expected_choices__", None)
+            else:
+                state["messages"].append(
+                    {"role": "assistant", "content": f"Please select a number between 1 and {len(choices)}."})
+        else:
+            state["messages"].append(
+                {"role": "assistant", "content": "Please enter a valid number corresponding to your choice."})
+        return state
+
+    if last_asked == "section_dimensions":
+        idx = state["slots"].get("section_index", 0)
+        cat = state["slots"].get("building_category")
+
+        if cat == "Apartment / Condominium":
+            try:
+                area = float(content)
+                while len(state["slots"]["section_dimensions"]) <= idx:
+                    state["slots"]["section_dimensions"].append({})
+                state["slots"]["section_dimensions"][idx]["area"] = area
+                state["slots"]["section_index"] += 1
+
+                num_sections = int(state["slots"].get("num_sections", 1))
+                if state["slots"]["section_index"] >= num_sections:
+                    state["slots"].pop("section_index", None)
+                    state["slots"].pop("awaiting_width", None)
+                    if "section_dimensions" not in state["asked"]:
+                        state["asked"].append("section_dimensions")
+                return state
+            except ValueError:
+                state["messages"].append({"role": "assistant", "content": "Please enter a valid number for the area."})
+                return state
+        else:
+            if state["slots"].get("awaiting_width", False):
+                try:
+                    width = float(content)
+                    while len(state["slots"]["section_dimensions"]) <= idx:
+                        state["slots"]["section_dimensions"].append({})
+                    state["slots"]["section_dimensions"][idx]["width"] = width
+                    state["slots"]["section_index"] += 1
+                    state["slots"]["awaiting_width"] = False
+
+                    num_sections = int(state["slots"].get("num_sections", 1))
+                    if state["slots"]["section_index"] >= num_sections:
+                        state["slots"].pop("section_index", None)
+                        state["slots"].pop("awaiting_width", None)
+                        if "section_dimensions" not in state["asked"]:
+                            state["asked"].append("section_dimensions")
+                    return state
+                except ValueError:
+                    state["messages"].append(
+                        {"role": "assistant", "content": "Please enter a valid number for the width."})
+                    return state
+            else:
+                try:
+                    length = float(content)
+                    while len(state["slots"]["section_dimensions"]) <= idx:
+                        state["slots"]["section_dimensions"].append({})
+                    state["slots"]["section_dimensions"][idx]["length"] = length
+                    state["slots"]["awaiting_width"] = True
+                    return state
+                except ValueError:
+                    state["messages"].append(
+                        {"role": "assistant", "content": "Please enter a valid number for the length."})
+                    return state
+
+    state["slots"][last_asked] = content
+    return state
+
+
+# ------------------------------
+# 7) Confirmation / summary nodes
+# ------------------------------
+def summary_confirmation_node(state: ValuationState) -> ValuationState:
+    import streamlit as st
+    
+    slots = state.get("slots", {})
+    messages = state.get("messages", [])
+    category = slots.get("building_category", "")
+    building_name = slots.get("building_name", "Unnamed Property")
+    
+    # Generate basic property details
+    property_details = [
+        ("Location", slots.get('prop_town', 'Not specified')),
+        ("Property Use", slots.get('gen_use', 'Not specified')),
+        ("Plot Area", f"{slots.get('plot_area_sqm', '0')} sqm"),
+        ("Category", category)
+    ]
+    
+    # Generate detailed information
+    detailed_info = []
+    if category in SPECIAL_CATEGORIES:
+        special_params = CATEGORY_SPECIAL_SLOTS.get(category, [])
+        for param in special_params:
+            if param in slots:
+                detailed_info.append((param.replace('_', ' ').title(), str(slots[param])))
+    else:
+        if slots.get("section_dimensions"):
+            for i, sec in enumerate(slots["section_dimensions"], 1):
+                if "length" in sec and "width" in sec:
+                    detailed_info.append((f"Section {i} Dimensions", f"{sec['length']}m × {sec['width']}m"))
+                elif "area" in sec:
+                    detailed_info.append((f"Section {i} Area", f"{sec['area']} sqm"))
+        
+        if "num_floors" in slots:
+            detailed_info.append(("Number of Floors", slots['num_floors']))
+        if "has_elevator" in slots:
+            detailed_info.append(("Has Elevator", 'Yes' if slots['has_elevator'] else 'No'))
+        if "has_basement" in slots:
+            detailed_info.append(("Has Basement", 'Yes' if slots['has_basement'] else 'No'))
+    
+    # Create a detailed summary message with all calculations
+    message = f"""
+    **Property Valuation Summary**
+    
+    **Property:** {building_name}
+    **Category:** {category}
+    
+    **Estimated Value:** ETB {int(float(slots.get('forced_sale_value', 0))):,}
+    
+    **Property Details:**
+    """
+    
+    # Add property details
+    all_details = property_details + detailed_info
+    for label, value in all_details:
+        message += f"- **{label}:** {value}\n"
+    
+    # Add confirmation prompt
+    message += """
+    
+    Please confirm if this information is correct by typing:
+    - 'yes' to confirm
+    - 'no' to start over
+    """
+    
+    # Add the message to the chat
+    messages.append({"role": "assistant", "content": message})
+    state.setdefault("asked", []).append("_confirmation")
+    return state
+
+
+def process_confirmation_node(state: ValuationState) -> ValuationState:
+    slots = state.get("slots", {})
+    messages = state.get("messages", [])
+    if not messages:
+        return state
+    user_response = messages[-1]["content"].strip().lower()
+    if user_response in {"yes", "y", "proceed", "confirm"}:
+        slots["_confirmed"] = True
+        messages.append({"role": "assistant", "content": "✅ Proceeding with valuation..."})
+    elif user_response in {"no", "n", "cancel", "stop"}:
+        messages.append({"role": "assistant", "content": "❌ Valuation cancelled. Type 'quit' or start over."})
+        slots["_confirmed"] = False
+    else:
+        messages.append({"role": "assistant", "content": "Please respond with 'yes' or 'no'."})
+    return state
+
+
+def should_calculate(state: ValuationState) -> str:
+    slots = state.get("slots", {})
+    remaining = missing_slots(slots)
+
+    if "section_dimensions" in remaining:
+        return "ASK"
+
+    if remaining:
+        return "ASK"
+    elif not slots.get("_confirmed", False):
+        return "CONFIRM"
+    return "CALC"
+
+
+# ------------------------------
+# 8) Material / specialized helpers
+# ------------------------------
+def _collect_selected_materials(slots: Dict[str, object], category: str) -> Dict[str, str]:
+    comps = get_material_components_for_category(category)
+    out: Dict[str, str] = {}
+    for c in comps:
+        out[c] = str(slots.get(f"material__{c}", "")).strip()
+    return out
+
+
+def _collect_specialized_components(slots: Dict[str, object], category: str) -> Dict[str, float | int]:
+    spec = {}
+    for key in CATEGORY_SPECIAL_SLOTS.get(category, []):
+        val = slots.get(key)
+        if val is None or val == "":
+            continue
+        try:
+            if key.startswith("num_"):
+                spec[key] = int(val)
+            else:
+                spec[key] = float(val)
+        except Exception:
+            spec[key] = val
+
+    # Add calculated total area for relevant categories
+    if category in {"Higher Villa", "Multi-Story Building", "MPH & Factory Building", "Apartment / Condominium"}:
+        total_area = 0.0
+        if category == "Apartment / Condominium":
+            total_area = sum(float(sec.get("area", 0)) for sec in slots.get("section_dimensions", []))
+        else:
+            total_area = sum(
+                float(sec.get("length", 0)) * float(sec.get("width", 0)) for sec in slots.get("section_dimensions", []))
+        spec["total_building_area"] = total_area
+
+    return spec
+
+
 def select_plot_grade(location: str, use_type: str, plot_area: float) -> str:
-    """Choose plot grade automatically from location_data.json tables."""
     try:
         town_data = PLOT_PRICES.get(location, {})
         use_data = town_data.get(use_type, {})
-        # grade table is typically: { "1st": { "0-200": rate, "201-500": rate, ... }, ... }
         for grade, ranges in use_data.items():
             for range_str in ranges.keys():
                 start_str, end_str = range_str.split("-")
@@ -280,285 +576,50 @@ def select_plot_grade(location: str, use_type: str, plot_area: float) -> str:
         pass
     return "Average"
 
-# ------------------------------
-# 7) LangGraph Nodes
-# ------------------------------
-def extract_info_node(state: ValuationState) -> ValuationState:
-    if not state.get("messages"):
-        return state
-    last = state["messages"][-1]
-    if last.get("role") != "user":
-        return state
-
-    asked_slots = state.get("asked", [])
-    if asked_slots:
-        last_asked = asked_slots[-1]
-        content = last.get("content", "").strip()
-
-        # Normalize booleans
-        if last_asked in {"has_basement", "has_elevator", "is_under_construction"}:
-            b = _boolify(content)
-            if b is not None:
-                state["slots"][last_asked] = b
-                return state
-
-        # Numbered choices handler
-        expected = state["slots"].get("__expected_choices__")
-        if expected:
-            slot, choices = expected
-            if content.isdigit():
-                idx = int(content) - 1
-                if 0 <= idx < len(choices):
-                    state["slots"][slot] = choices[idx]
-                    state["slots"].pop("__expected_choices__", None)
-                    return state
-
-        # Everything else: store raw text
-        state["slots"][last_asked] = content
-        return state
-
-    return state
-
-def ask_next_question_node(state: ValuationState) -> ValuationState:
-    slots = state.get("slots", {})
-    asked = set(state.get("asked", []))
-    remaining = [s for s in missing_slots(slots) if s not in asked]
-    if not remaining:
-        return state
-
-    s = remaining[0]
-
-    # Choice lists
-    options_map = {
-        "building_category": VALID_CATEGORIES,
-        "gen_use": VALID_USE,
-        "prop_town": VALID_TOWN_CLASSES,
-    }
-
-    # Pretty labels for some fields
-    label_map = {
-        "length_m": "building length (meters)",
-        "width_m": "building width (meters)",
-        "num_floors": "number of floors",
-        "has_basement": "Does the building have a basement?",
-        "is_under_construction": "Is the building under construction?",
-        "incomplete_components": "List incomplete components",
-        "plot_area_sqm": "plot area (sqm)",
-        "mcf": "Market Condition Factor (MCF)",
-        "pef": "Property Enhancement Factor (PEF)",
-        "has_elevator": "Is there an elevator?",
-        "elevator_stops": "How many elevator stops?",
-    }
-
-    # Examples for generic numeric answers
-    generic_examples = {
-        "length_m": "e.g., 20",
-        "width_m": "e.g., 15",
-        "num_floors": "e.g., 3",
-        "incomplete_components": "e.g., Foundation, Roof (or leave empty)",
-        "plot_area_sqm": "e.g., 450",
-        "mcf": "Reply 1.0 if unsure",
-        "pef": "Reply 1.0 if unsure",
-        "elevator_stops": "e.g., 5",
-    }
-
-    # If we’re asking a choice slot
-    if s in options_map:
-        choices = options_map[s]
-        if s == "prop_town":
-            body = format_choices_with_examples(choices, TOWN_CLASS_EXAMPLES)
-        else:
-            body = "\n".join(f"{i+1}. {c}" for i, c in enumerate(choices))
-        q = f"Please select {s.replace('_', ' ')}:\n{body}\n(Reply with the number)"
-        state["slots"]["__expected_choices__"] = (s, choices)
-
-    # Material slot? (material__<component>)
-    elif s.startswith("material__"):
-        comp = s.split("__", 1)[1]
-        ex = MATERIAL_EXAMPLES.get(comp.lower(), "describe the material clearly")
-        q = f"Enter the selected material for {comp} (e.g., {ex}):"
-
-    # Category-special slot?
-    elif s in SPECIAL_SLOT_EXAMPLES:
-        label = s.replace("_", " ")
-        q = f"Enter {label} ({SPECIAL_SLOT_EXAMPLES[s]}):"
-
-    # Generic scalar questions
-    elif s in label_map:
-        label = label_map[s]
-        ex = generic_examples.get(s)
-        if s in {"has_basement", "is_under_construction", "has_elevator"}:
-            q = f"{label} (yes/no)"
-        else:
-            q = f"Enter the {label}{f' ({ex})' if ex else ''}:"
-
-    # Fallback
-    else:
-        q = f"Please provide the value for: {s}"
-
-    state["messages"].append({"role": "assistant", "content": q})
-    state.setdefault("asked", []).append(s)
-    return state
-
-def summary_confirmation_node(state: ValuationState) -> ValuationState:
-    """Show summary of all collected data and ask for confirmation."""
-    slots = state.get("slots", {})
-    messages = state.get("messages", [])
-    asked = state.get("asked", [])
-    
-    # Build summary
-    building_name = slots.get("building_name", "Unknown")
-    category = slots.get("building_category", "Unknown")
-    plot_area = slots.get("plot_area_sqm", "0")
-    prop_town = slots.get("prop_town", "Unknown")
-    gen_use = slots.get("gen_use", "Unknown")
-    
-    # Collect materials
-    materials = []
-    for key, value in slots.items():
-        if key.startswith("material__"):
-            material_type = key.replace("material__", "").replace("_", " ").title()
-            materials.append(f"  - {material_type}: {value}")
-    
-    materials_text = "\n".join(materials) if materials else "  - No materials specified"
-    
-    # Build building details section based on category type
-    if category in SPECIAL_CATEGORIES:
-        # For special categories, show specialized components instead of generic dimensions
-        building_details = f"""🏠 **Building Details:**
-  - Name: {building_name}
-  - Type: {category}"""
-        
-        # Add specialized components for special categories
-        specialized_components = []
-        for key, value in slots.items():
-            if key in CATEGORY_SPECIAL_SLOTS.get(category, []):
-                component_name = key.replace("_", " ").title()
-                if key.startswith("num_"):
-                    specialized_components.append(f"  - {component_name}: {value}")
-                else:
-                    unit = "sqm" if "area" in key else ("km" if "km" in key else ("m" if any(x in key for x in ["length", "depth"]) else ""))
-                    specialized_components.append(f"  - {component_name}: {value} {unit}".strip())
-        
-        if specialized_components:
-            building_details += "\n\n� **Specialized Components:**\n" + "\n".join(specialized_components)
-    else:
-        # For regular categories, show traditional building dimensions
-        length = slots.get("length_m", "0")
-        width = slots.get("width_m", "0")
-        num_floors = slots.get("num_floors", "1")
-        has_basement = "Yes" if slots.get("has_basement") == "true" else "No"
-        
-        building_details = f"""🏠 **Building Details:**
-  - Name: {building_name}
-  - Type: {category}
-  - Dimensions: {length}m x {width}m
-  - Floors: {num_floors}
-  - Basement: {has_basement}"""
-    
-    summary = f"""
-📋 **VALUATION SUMMARY**
-
-{building_details}
-
-📍 **Location:**
-  - Plot Area: {plot_area} sqm
-  - Town: {prop_town}
-  - Use: {gen_use}
-
-🔧 **Materials:**
-{materials_text}
-
-💰 **Financial Factors:**
-  - MCF: {slots.get("mcf", "1.0")}
-  - PEF: {slots.get("pef", "1.0")}
-
-Do you want to proceed with the valuation? (yes/no)
-"""
-    
-    messages.append({"role": "assistant", "content": summary})
-    asked.append("_confirmation")
-    
-    return {"messages": messages, "slots": slots, "asked": asked}
-
-def process_confirmation_node(state: ValuationState) -> ValuationState:
-    """Process the user's confirmation response."""
-    slots = state.get("slots", {})
-    messages = state.get("messages", [])
-    asked = state.get("asked", [])
-    
-    if not messages:
-        return state
-    
-    user_response = messages[-1]["content"].strip().lower()
-    
-    if user_response in ["yes", "y", "proceed", "confirm"]:
-        slots["_confirmed"] = True
-        messages.append({"role": "assistant", "content": "✅ Proceeding with valuation calculation..."})
-    elif user_response in ["no", "n", "cancel", "stop"]:
-        messages.append({"role": "assistant", "content": "❌ Valuation cancelled. Type 'quit' to exit or start over."})
-        # Reset confirmation to allow restart
-        slots["_confirmed"] = False
-    else:
-        messages.append({"role": "assistant", "content": "Please respond with 'yes' to proceed or 'no' to cancel."})
-        # Keep asking for confirmation
-        return {"messages": messages, "slots": slots, "asked": asked}
-    
-    return {"messages": messages, "slots": slots, "asked": asked}
-
-def should_calculate(state: ValuationState) -> str:
-    slots = state.get("slots", {})
-    remaining = missing_slots(slots)
-    if remaining:
-        return "ASK"
-    else:
-        # Check if we need confirmation
-        if not slots.get("_confirmed", False):
-            return "CONFIRM"
-        return "CALC"
 
 def calculate_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
+    category = slots.get("building_category")
+
+    # --- Prepare payload for property_valuation_tool ---
+
     # Scalars / factors
     mcf = float(slots.get("mcf", 1.0) or 1.0)
     pef = float(slots.get("pef", 1.0) or 1.0)
     has_elevator = bool(slots.get("has_elevator", False))
     elevator_stops = int(slots.get("elevator_stops") or 0)
 
-    category = str(slots.get("building_category"))
-
-    # Materials per category
-    selected_materials = _collect_selected_materials(slots, category)
-
     # Building core data
+    # FIX: Correctly call the helper function to get the full specialized_components dict
+    specialized_components = _collect_specialized_components(slots, category)
+
     building = {
         "name": str(slots.get("building_name", "Building 1")),
         "category": category,
-        "length": float(slots.get("length_m", 0)),  # Default to 0 for special categories
-        "width": float(slots.get("width_m", 0)),   # Default to 0 for special categories
-        "num_floors": int(slots.get("num_floors", 1)),  # Default to 1 for special categories
+        "length": None,
+        "width": None,
+        "num_floors": int(slots.get("num_floors", 1)),
         "has_basement": bool(slots.get("has_basement", False)),
         "is_under_construction": bool(slots.get("is_under_construction", False)),
         "incomplete_components": [
             c.strip() for c in str(slots.get("incomplete_components", "")).split(",") if c.strip()
         ],
-        "selected_materials": selected_materials,
-        "confirmed_grade": None,  # grade is suggested automatically by the engine
-        "specialized_components": _collect_specialized_components(slots, category),
+        "selected_materials": _collect_selected_materials(slots, category),
+        "confirmed_grade": None,
+        "specialized_components": specialized_components,  # This is the crucial fix
     }
 
     # Property details (+ auto plot-grade)
     prop_town = str(slots.get("prop_town"))
     gen_use = str(slots.get("gen_use"))
     plot_area = float(slots.get("plot_area_sqm"))
-
     plot_grade = select_plot_grade(prop_town, gen_use, plot_area)
 
     property_details = {
         "plot_area": plot_area,
         "prop_town": prop_town,
         "gen_use": gen_use,
-        "plot_grade": plot_grade,  # user never chooses; auto-picked above
+        "plot_grade": plot_grade,
     }
 
     special_items = {"has_elevator": has_elevator, "elevator_stops": elevator_stops}
@@ -582,61 +643,74 @@ def calculate_node(state: ValuationState) -> ValuationState:
         "remarks": "Generated by LangGraph agent",
     }
 
-    result_text: str = property_valuation_tool.invoke(payload)
-    state["messages"].append({"role": "assistant", "content": result_text})
+    # --- Invoke the tool and get the result ---
+    try:
+        # The tool returns a formatted string, not JSON
+        result_text = property_valuation_tool.invoke(payload)
+        
+        # Extract building name or use a default
+        building_name = slots.get('building_name', 'the property')
+        
+        # Extract valuation amounts
+        import re
+        valuation_amount = "[Calculating...]"
+        market_value = "[Not available]"
+        
+        market_value_match = re.search(r'Estimated Market Value.*?ETB\s*([\d,]+(?:\.[\d]+)?)', result_text)
+        forced_value_match = re.search(r'Estimated Forced Sale Value.*?ETB\s*([\d,]+(?:\.[\d]+)?)', result_text)
+        
+        if market_value_match:
+            market_value = f"ETB {market_value_match.group(1)}"
+        if forced_value_match:
+            valuation_amount = f"ETB {forced_value_match.group(1)}"
+            
+        # Clean up the result text
+        clean_result = re.sub(r'<[^>]+>', '', result_text)
+        clean_result = ' '.join(clean_result.split())
+        
+        # Get materials used
+        materials = _collect_selected_materials(slots, category)
+        
+        # Create a summary with property details and valuation
+        summary_text = f"""
+📌 **PROPERTY DETAILS**
+**Location:** {prop_town}
+**Category:** {category}
+**Property Use:** {gen_use}
+**Plot Area:** {plot_area:,.2f} sqm
+
+🏠 **PROPERTY VALUATION SUMMARY**
+
+**Market Value:** {market_value}
+**Forced Sale Value (70% of Market Value):** {valuation_amount}
+"""
+        
+        # Add the final summary message
+        state["messages"].append({
+            "role": "assistant",
+            "content": summary_text
+        })
+    except Exception as e:
+        # If there's an error, show a friendly error message
+        error_message = [
+            "❌ **Valuation Failed** ❌",
+            "The tool was unable to calculate the valuation due to an error.",
+            "",
+            f"Error details: {str(e)}",
+            "",
+            "Please check the input data and try again. If the problem persists, contact support."
+        ]
+        state["messages"].append({"role": "assistant", "content": "\n".join(error_message)})
+        summary_text = "\n".join(error_message)
+    state["messages"].append({"role": "assistant", "content": summary_text})
     return state
-
-def _collect_selected_materials(slots: Dict[str, object], category: str) -> Dict[str, str]:
-    comps = get_material_components_for_category(category)
-    out: Dict[str, str] = {}
-    for comp in comps:
-        out[comp] = str(slots.get(f"material__{comp}", "")).strip()
-    return out
-
-def _collect_specialized_components(slots: Dict[str, object], category: str) -> Dict[str, float | int]:
-    spec = {}
-    for key in CATEGORY_SPECIAL_SLOTS.get(category, []):
-        val = slots.get(key)
-        if val is None or val == "":
-            continue
-        # try numeric conversion where reasonable
-        try:
-            if key.startswith("num_"):
-                spec[key] = int(val)
-            else:
-                spec[key] = float(val)
-        except Exception:
-            # leave as string if conversion fails (but engine expects numbers)
-            spec[key] = val
-    return spec
-
-def build_graph():
-    builder = StateGraph(ValuationState)
-    builder.add_node("extract_info", extract_info_node)
-    builder.add_node("ask", ask_next_question_node)
-    builder.add_node("summary_confirmation", summary_confirmation_node)
-    builder.add_node("process_confirmation", process_confirmation_node)
-    builder.add_node("calculate", calculate_node)
-    builder.add_edge(START, "extract_info")
-    builder.add_conditional_edges("extract_info", should_calculate, {"ASK": "ask", "CONFIRM": "summary_confirmation", "CALC": "calculate"})
-    builder.add_edge("ask", "extract_info")
-    builder.add_edge("summary_confirmation", "process_confirmation")
-    builder.add_conditional_edges("process_confirmation", lambda state: "CONFIRM" if state["slots"].get("_confirmed", False) else "ASK", {"ASK": "ask", "CONFIRM": "calculate"})
-    builder.add_edge("calculate", END)
-    builder.config = {"recursion_limit": 100}
-    return builder
-
 # ------------------------------
-# 8) CLI Runner
+# 8) CLI Runner (simplified)
 # ------------------------------
 if __name__ == "__main__":
     print("\n🏗️ Property Valuation Agent (LangGraph)")
     print("Type 'quit' to exit.\n")
-
     state: ValuationState = initial_state()
-    graph = build_graph().compile()
-
-    # Kick off
     state = ask_next_question_node(state)
     print("Bot:", state["messages"][-1]["content"], "\n")
 
@@ -647,34 +721,16 @@ if __name__ == "__main__":
             break
 
         state["messages"].append({"role": "user", "content": user})
-        
-        # Check if we're in confirmation mode
-        if "_confirmation" in state.get("asked", []):
-            state = process_confirmation_node(state)
-            # After processing confirmation, check what to do next
-            if state["slots"].get("_confirmed", False):
-                state = calculate_node(state)
-                state["asked"] = []
-                # Reset confirmation for next run
-                state["slots"]["_confirmed"] = False
-            elif state["slots"].get("_confirmed") == False:
-                # User cancelled, restart the questioning process
-                remaining = missing_slots(state.get("slots", {}))
-                if remaining:
-                    state = ask_next_question_node(state)
-        else:
-            # Extract info from user input first
-            state = extract_info_node(state)
-            
-            # Use the graph to determine next action
-            result = should_calculate(state)
-            
-            if result == "ASK":
-                state = ask_next_question_node(state)
-            elif result == "CONFIRM":
-                state = summary_confirmation_node(state)
-            elif result == "CALC":
-                state = calculate_node(state)
-                state["asked"] = []
+        state = extract_info_node(state)
+
+        # Determine the next step based on the updated state
+        next_step = should_calculate(state)
+
+        if next_step == "ASK":
+            state = ask_next_question_node(state)
+        elif next_step == "CONFIRM":
+            state = summary_confirmation_node(state)
+        elif next_step == "CALC":
+            state = calculate_node(state)
 
         print("Bot:", state["messages"][-1]["content"], "\n")

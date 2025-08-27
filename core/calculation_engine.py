@@ -149,18 +149,33 @@ def run_full_valuation(valuation_data: dict) -> dict:
         category = building.get('category', 'Multi-Story Building')
         building_cost = 0
 
+        specialized_components = building.get('specialized_components', {})
+        
+        # Calculate building area if not provided in specialized_components
+        if "total_building_area" in specialized_components:
+            total_building_area = specialized_components["total_building_area"]
+        else:
+            # Fallback to length * width if total_building_area not provided
+            length = building.get('length', 0)
+            width = building.get('width', 0)
+            total_building_area = length * width
+
         if category in ["Higher Villa", "Multi-Story Building", "MPH & Factory Building", "Apartment / Condominium"]:
-            area = building.get('length', 0) * building.get('width', 0)
-            num_floors = building.get('num_floors', 0)
+            num_floors = building.get('num_floors', 1)  # Default to 1 floor if not specified
+            area = total_building_area
 
             if category == "Higher Villa":
-                building_type_for_rate = "Single Story Building (higher Villa)"; policy_check_type = "Higher Villa"
+                building_type_for_rate = "Single Story Building (higher Villa)"
+                policy_check_type = "Higher Villa"
             elif 1 <= num_floors <= 3:
-                building_type_for_rate = "G+1 and G+2"; policy_check_type = "G+1-3"
+                building_type_for_rate = "G+1 and G+2"
+                policy_check_type = "G+1-3"
             elif num_floors >= 4:
-                building_type_for_rate = "G+3 and G+4"; policy_check_type = "G+4 & above"
+                building_type_for_rate = "G+3 and G+4"
+                policy_check_type = "G+4 & above"
             else:
-                building_type_for_rate = "Single Story Building (higher Villa)"; policy_check_type = "Higher Villa"
+                building_type_for_rate = "Single Story Building (higher Villa)"
+                policy_check_type = "Higher Villa"
 
             suggested_grade = suggest_grade_from_materials(building.get('selected_materials', {}), category)
             all_suggested_grades[f"Building {i + 1} ({building.get('name')})"] = suggested_grade
@@ -169,17 +184,22 @@ def run_full_valuation(valuation_data: dict) -> dict:
             rate = get_building_grade_rate(building_type_for_rate, grade)
             full_replacement_cost = area * rate * (num_floors + 1 if category != "Apartment / Condominium" else 1)
 
-            if building.get('has_basement', False): full_replacement_cost *= 1.25
+            if building.get('has_basement', False):
+                full_replacement_cost *= 1.25
 
             if building.get('is_under_construction', False):
-                building_cost, completed_percent = calculate_under_construction_value(full_replacement_cost,
-                                                                                      building_type_for_rate, grade,
-                                                                                      building.get(
-                                                                                          'incomplete_components', []))
+                building_cost, completed_percent = calculate_under_construction_value(
+                    full_replacement_cost,
+                    building_type_for_rate,
+                    grade,
+                    building.get('incomplete_components', [])
+                )
                 min_completion = minimum_completion_stages.get(policy_check_type, 0)
                 if completed_percent < min_completion:
                     validation_warnings.append(
-                        f"Warning: Building '{building.get('name')}' is only {completed_percent:.0%} complete, which is below the required minimum of {min_completion:.0%} for a loan.")
+                        f"Warning: Building '{building.get('name')}' is only {completed_percent:.0%} complete, "
+                        f"which is below the required minimum of {min_completion:.0%} for a loan."
+                    )
             else:
                 building_cost = full_replacement_cost
 
@@ -197,6 +217,7 @@ def run_full_valuation(valuation_data: dict) -> dict:
 
         total_building_cost += building_cost
 
+    # The rest of the function remains the same
     ccw = total_building_cost
 
     special_items_cost = 0
@@ -212,14 +233,15 @@ def run_full_valuation(valuation_data: dict) -> dict:
 
     if valuation_data['buildings'][0]['category'] == "Apartment / Condominium":
         grade = valuation_data['buildings'][0].get('confirmed_grade', 'Average')
-        if grade in ["Excellent", "Good"]:
-            plot_area_factor = 0.8
-        else:
-            plot_area_factor = 0.4
+        plot_area_factor = 0.8 if grade in ["Excellent", "Good"] else 0.4
         plot_area *= plot_area_factor
 
-    calculated_lv = calculate_location_value(property_details.get('prop_town', ''), property_details.get('gen_use', ''),
-                                             property_details.get('plot_grade', ''), plot_area)
+    calculated_lv = calculate_location_value(
+        property_details.get('prop_town', ''),
+        property_details.get('gen_use', ''),
+        property_details.get('plot_grade', ''),
+        plot_area
+    )
     lv_limit = calculate_location_value_limit(ccw, plot_area)
     final_location_value = min(calculated_lv, lv_limit)
 
@@ -239,7 +261,6 @@ def run_full_valuation(valuation_data: dict) -> dict:
 
     sub_total = ccw + final_location_value + total_other_costs
     consultancy_fee = sub_total * (valuation_data.get('other_costs', {}).get('consultancy_percent', 0) / 100)
-
     total_market_value = (sub_total + consultancy_fee) * mcf * pef
     forced_value = total_market_value * 0.8
 
