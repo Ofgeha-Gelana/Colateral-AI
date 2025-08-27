@@ -671,48 +671,19 @@ def calculate_node(state: ValuationState) -> ValuationState:
         # Get materials used
         materials = _collect_selected_materials(slots, category)
         
-        # Create a clean text-based summary
+        # Create a summary with property details and valuation
         summary_text = f"""
-🏠 **PROPERTY VALUATION REPORT**
-
-**Property:** {building_name}
+📌 **PROPERTY DETAILS**
 **Location:** {prop_town}
 **Category:** {category}
 **Property Use:** {gen_use}
 **Plot Area:** {plot_area:,.2f} sqm
-**Number of Floors:** {slots.get('num_floors', 'N/A')}
 
----
-
-### VALUATION SUMMARY
+🏠 **PROPERTY VALUATION SUMMARY**
 
 **Market Value:** {market_value}
 **Forced Sale Value (70% of Market Value):** {valuation_amount}
-
----
-
-### PROPERTY DETAILS
-
-**Plot Grade:** {plot_grade}
-**Construction Status:** {'Under Construction' if slots.get('is_under_construction') else 'Completed'}
-**Has Basement:** {'Yes' if slots.get('has_basement') else 'No'}
-
----
-
-### CONSTRUCTION MATERIALS
 """
-        # Add materials
-        for component, material in materials.items():
-            if material:
-                summary_text += f"- **{component.replace('_', ' ').title()}:** {material}\n"
-        
-        # Add calculation details
-        summary_text += """
----
-
-### CALCULATION DETAILS
-"""
-        summary_text += clean_result
         
         # Add the final summary message
         state["messages"].append({
