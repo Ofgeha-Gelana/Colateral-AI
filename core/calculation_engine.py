@@ -149,16 +149,20 @@ def run_full_valuation(valuation_data: dict) -> dict:
         category = building.get('category', 'Multi-Story Building')
         building_cost = 0
 
-        if category in ["Higher Villa", "Multi-Story Building", "MPH & Factory Building", "Apartment / Condominium"]:
-            # ---------- Updated: handle multi-section buildings ----------
-            if category in ["Higher Villa", "Multi-Story Building"]:
-                sections = building.get('section_dimensions', [])
-                area = sum(float(sec.get('length', 0)) * float(sec.get('width', 0)) for sec in sections)
-            else:
-                area = building.get('length', 0) * building.get('width', 0)
-            # ----------------------------------------------------------------
+        specialized_components = building.get('specialized_components', {})
+        
+        # Calculate building area if not provided in specialized_components
+        if "total_building_area" in specialized_components:
+            total_building_area = specialized_components["total_building_area"]
+        else:
+            # Fallback to length * width if total_building_area not provided
+            length = building.get('length', 0)
+            width = building.get('width', 0)
+            total_building_area = length * width
 
-            num_floors = building.get('num_floors', 0)
+        if category in ["Higher Villa", "Multi-Story Building", "MPH & Factory Building", "Apartment / Condominium"]:
+            num_floors = building.get('num_floors', 1)  # Default to 1 floor if not specified
+            area = total_building_area
 
             if category == "Higher Villa":
                 building_type_for_rate = "Single Story Building (higher Villa)"
@@ -213,7 +217,7 @@ def run_full_valuation(valuation_data: dict) -> dict:
 
         total_building_cost += building_cost
 
-    # ----------- The rest of the function remains the same -------------
+    # The rest of the function remains the same
     ccw = total_building_cost
 
     special_items_cost = 0

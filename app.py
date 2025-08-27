@@ -299,11 +299,15 @@ def display_messages():
                     <div class="message-timestamp">{timestamp}</div>
                 </div>
             </div>
+            '''
+            
+            # Add the JavaScript separately with proper escaping
+            st.markdown('''
             <script>
-                function copyToClipboard(messageId) {{
-                    const text = document.querySelector(`#${{messageId}}`).innerText;
-                    navigator.clipboard.writeText(text);
-                }}
+            function copyToClipboard(messageId) {
+                const text = document.querySelector(`#${messageId}`).innerText;
+                navigator.clipboard.writeText(text);
+            }
             </script>
             ''', unsafe_allow_html=True)
 
@@ -346,6 +350,9 @@ def process_input(user_input):
             st.session_state.agent_state["asked"] = []
             st.session_state.agent_state["slots"]["_confirmed"] = False
         elif st.session_state.agent_state["slots"].get("_confirmed") == False:
+            # Reset and start over
+            st.session_state.agent_state["asked"] = []
+            st.session_state.agent_state["slots"]["_confirmed"] = None
             remaining = missing_slots(st.session_state.agent_state.get("slots", {}))
             if remaining:
                 st.session_state.agent_state = ask_next_question_node(st.session_state.agent_state)
