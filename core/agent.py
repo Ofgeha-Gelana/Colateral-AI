@@ -195,8 +195,6 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
         if cat == "Apartment / Condominium":
             # Skip length, width, floors, elevator questions
             req = [s for s in req if s not in {
-                "length_m",
-                "width_m",
                 "num_floors",
                 "has_elevator",
                 "elevator_stops"
@@ -249,9 +247,7 @@ def missing_slots(slots: Dict[str, object]) -> List[str]:
         needed = [s for s in needed if s != "incomplete_components"]
     return needed
 
-# ------------------------------
-# 6) Ask next question
-# ------------------------------
+
 def ask_next_question_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
     asked = set(state.get("asked", []))
@@ -323,12 +319,16 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         idx = slots["section_index"]
         if idx < num_sections:
             # Ask length first, then width
-            if "awaiting_width" in slots and slots["awaiting_width"]:
-                q = f"Enter width of section {idx+1} in meters (e.g., 5):"
-                slots["awaiting_width"] = False
+            if cat == "Apartment / Condominium":
+                q = f"Enter area of section {idx+1} in sqm (e.g., 50):"
+                slots["awaiting_width"] = False  # Not used for condos
             else:
-                q = f"Enter length of section {idx+1} in meters (e.g., 10):"
-                slots["awaiting_width"] = True
+                if "awaiting_width" in slots and slots["awaiting_width"]:
+                    q = f"Enter width of section {idx+1} in meters (e.g., 5):"
+                    slots["awaiting_width"] = False
+                else:
+                    q = f"Enter length of section {idx+1} in meters (e.g., 10):"
+                    slots["awaiting_width"] = True
         else:
             # Done
             state["slots"].pop("section_index", None)
@@ -351,9 +351,7 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     state.setdefault("asked",[]).append(s)
     return state
 
-# ------------------------------
-# 7) Calculation node
-# ------------------------------
+
 def calculate_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
     category = slots.get("building_category")
@@ -361,6 +359,8 @@ def calculate_node(state: ValuationState) -> ValuationState:
     # Handle multi-section buildings
     if category in {"Higher Villa","Multi-Story Building"}:
         total_area = sum(float(sec["length"])*float(sec["width"]) for sec in slots.get("section_dimensions",[]))
+    elif category == "Apartment / Condominium":
+        total_area = sum(float(sec.get("area",0)) for sec in slots.get("section_dimensions",[]))
     else:
         total_area = float(slots.get("plot_area_sqm",0))
 
