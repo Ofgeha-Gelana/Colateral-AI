@@ -274,6 +274,8 @@ def initialize_session():
             initial_msg = st.session_state.agent_state["messages"][-1]["content"]
             st.session_state.messages.append({"role": "assistant", "content": initial_msg})
 
+
+
 def display_messages():
     """Display chat messages"""
     for message in st.session_state.messages:
@@ -299,9 +301,9 @@ def display_messages():
                     <div class="message-timestamp">{timestamp}</div>
                 </div>
             </div>
-            '''
+            ''', unsafe_allow_html=True)
             
-            # Add the JavaScript separately with proper escaping
+            # Add the JavaScript for copy functionality
             st.markdown('''
             <script>
             function copyToClipboard(messageId) {

@@ -111,12 +111,7 @@ BASE_REQUIRED_SLOTS_IN_ORDER: List[str] = [
 ]
 
 SPECIAL_CATEGORY_BASE_SLOTS: List[str] = [
-    "building_name",
-    "building_category",
-    "plot_area_sqm",
-    "prop_town",
-    "gen_use",
-    # Removed non-essential fields for special categories
+    "prop_town"  # Only property location is required for special categories
 ]
 
 SPECIAL_CATEGORIES = ["Fuel Station", "Coffee Washing Site", "Green House"]
@@ -466,7 +461,7 @@ def summary_confirmation_node(state: ValuationState) -> ValuationState:
         if "has_basement" in slots:
             detailed_info.append(("Has Basement", 'Yes' if slots['has_basement'] else 'No'))
     
-    # Create a simple list-style summary
+    # Create a detailed summary message with all calculations
     message = f"""
     **Property Valuation Summary**
     
@@ -478,7 +473,7 @@ def summary_confirmation_node(state: ValuationState) -> ValuationState:
     **Property Details:**
     """
     
-    # Add property details in a simple list
+    # Add property details
     all_details = property_details + detailed_info
     for label, value in all_details:
         message += f"- **{label}:** {value}\n"
@@ -656,106 +651,74 @@ def calculate_node(state: ValuationState) -> ValuationState:
         # Extract building name or use a default
         building_name = slots.get('building_name', 'the property')
         
-        # Extract valuation amount and clean result
+        # Extract valuation amounts
         import re
         valuation_amount = "[Calculating...]"
+        market_value = "[Not available]"
+        
         market_value_match = re.search(r'Estimated Market Value.*?ETB\s*([\d,]+(?:\.[\d]+)?)', result_text)
+        forced_value_match = re.search(r'Estimated Forced Sale Value.*?ETB\s*([\d,]+(?:\.[\d]+)?)', result_text)
+        
         if market_value_match:
-            valuation_amount = f"ETB {market_value_match.group(1)}"
+            market_value = f"ETB {market_value_match.group(1)}"
+        if forced_value_match:
+            valuation_amount = f"ETB {forced_value_match.group(1)}"
             
+        # Clean up the result text
         clean_result = re.sub(r'<[^>]+>', '', result_text)
         clean_result = ' '.join(clean_result.split())
         
-        # Start with a clean, compact header
-        summary_html = f"""
-        <div style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; font-size: 14px;">
-            <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 10px; margin-bottom: 15px;">
-                <div style="color: #2d3748; font-size: 20px; font-weight: 600;">
-                    {building_name}
-                </div>
-                <div style="color: #718096; font-size: 13px;">
-                    {prop_town} • {category}
-                </div>
-            </div>
-            
-            <!-- Valuation Card -->
-            <div style="background: #f7fafc; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-                <div style="color: #4a5568; font-size: 14px; margin-bottom: 5px;">
-                    Estimated Forced Sale Value
-                </div>
-                <div style="color: #2d3748; font-size: 24px; font-weight: 700;">
-                    {valuation_amount}
-                </div>
-            </div>
-        
-            <!-- Property Specs -->
-            <div style="display: flex; gap: 10px; margin-bottom: 15px; font-size: 13px;">
-                <div style="flex: 1; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px;">
-                    <div style="color: #718096; margin-bottom: 5px; font-size: 12px;">Plot Area</div>
-                    <div style="font-weight: 600;">{plot_area:,.2f} sqm</div>
-                </div>
-                <div style="flex: 1; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px;">
-                    <div style="color: #718096; margin-bottom: 5px; font-size: 12px;">Use</div>
-                    <div style="font-weight: 600;">{gen_use}</div>
-                </div>
-                <div style="flex: 1; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px;">
-                    <div style="color: #718096; margin-bottom: 5px; font-size: 12px;">Floors</div>
-                    <div style="font-weight: 600;">{slots.get('num_floors', 'N/A')}</div>
-                </div>
-            </div>
-            
-            <!-- Show Details Button -->
-            <div>
-                <button onclick="this.nextElementSibling.style.display='block';this.style.display='none'" 
-                        style="background: none;
-                               border: 1px solid #4299e1;
-                               color: #4299e1;
-                               padding: 8px 16px;
-                               border-radius: 4px;
-                               cursor: pointer;
-                               font-size: 13px;">
-                    Show Details
-                </button>
-                <div style="display: none; margin-top: 15px; padding: 15px; background: white; border: 1px solid #e2e8f0; border-radius: 6px;">
-                    <div style="color: #4a5568; margin-bottom: 10px; font-weight: 600;">Valuation Details</div>
-                    <div style="color: #4a5568; font-size: 13px; line-height: 1.5;">
-                        {clean_result}
-                    </div>
-        """
-        
-        # Add materials section if available
+        # Get materials used
         materials = _collect_selected_materials(slots, category)
-        if materials:
-            materials_html = """
-                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e2e8f0;">
-                        <div style="color: #4a5568; margin-bottom: 10px; font-weight: 600;">Construction Materials</div>
-                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
-            """
-            
-            for component, material in materials.items():
-                if material:
-                    materials_html += f"""
-                        <div style="padding: 8px; background: #f8fafc; border-radius: 4px; font-size: 13px;">
-                            <div style="color: #718096; font-size: 12px;">{component.replace('_', ' ').title()}</div>
-                            <div style="font-weight: 500;">{material}</div>
-                        </div>
-                    """
-            
-            summary_html += materials_html + """
-                        </div>
-                    </div>
-            """
         
-        # Close all open divs
-        summary_html += """
-                </div>
-            </div>
-        </div>
-        """
+        # Create a clean text-based summary
+        summary_text = f"""
+🏠 **PROPERTY VALUATION REPORT**
+
+**Property:** {building_name}
+**Location:** {prop_town}
+**Category:** {category}
+**Property Use:** {gen_use}
+**Plot Area:** {plot_area:,.2f} sqm
+**Number of Floors:** {slots.get('num_floors', 'N/A')}
+
+---
+
+### VALUATION SUMMARY
+
+**Market Value:** {market_value}
+**Forced Sale Value (70% of Market Value):** {valuation_amount}
+
+---
+
+### PROPERTY DETAILS
+
+**Plot Grade:** {plot_grade}
+**Construction Status:** {'Under Construction' if slots.get('is_under_construction') else 'Completed'}
+**Has Basement:** {'Yes' if slots.get('has_basement') else 'No'}
+
+---
+
+### CONSTRUCTION MATERIALS
+"""
+        # Add materials
+        for component, material in materials.items():
+            if material:
+                summary_text += f"- **{component.replace('_', ' ').title()}:** {material}\n"
         
-        # Clean up whitespace
-        summary_text = "\n".join(line.strip() for line in summary_html.split('\n') if line.strip())
-    
+        # Add calculation details
+        summary_text += """
+---
+
+### CALCULATION DETAILS
+"""
+        summary_text += clean_result
+        
+        # Add the final summary message
+        state["messages"].append({
+            "role": "assistant",
+            "content": summary_text
+        })
     except Exception as e:
         # If there's an error, show a friendly error message
         error_message = [
@@ -766,6 +729,7 @@ def calculate_node(state: ValuationState) -> ValuationState:
             "",
             "Please check the input data and try again. If the problem persists, contact support."
         ]
+        state["messages"].append({"role": "assistant", "content": "\n".join(error_message)})
         summary_text = "\n".join(error_message)
     state["messages"].append({"role": "assistant", "content": summary_text})
     return state
