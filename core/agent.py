@@ -207,14 +207,22 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
     needed = [s for s in current_required_slots(slots) if s not in slots]
+    
+    cat = slots.get("building_category")
+    
+    # Skip section-related slots for Apartment/Condominium
+    if cat == "Apartment / Condominium":
+        needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "has_basement"}]
 
-    if "has_elevator" in slots and slots.get("has_elevator") is False:
+    # Handle other conditional fields
+    if "has_elevator" in slots and not slots["has_elevator"]:
         needed = [s for s in needed if s != "elevator_stops"]
-    if "is_under_construction" in slots and slots.get("is_under_construction") is False:
+    if "is_under_construction" in slots and not slots["is_under_construction"]:
         needed = [s for s in needed if s != "incomplete_components"]
 
-    if "section_dimensions" in needed:
-        if "section_index" in slots and slots.get("section_index", 0) < int(slots.get("num_sections", 1)):
+    # Only process section_dimensions if it's still needed and not for Apartment/Condominium
+    if "section_dimensions" in needed and cat != "Apartment / Condominium":
+        if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
             needed.remove("section_dimensions")
 
     return needed
