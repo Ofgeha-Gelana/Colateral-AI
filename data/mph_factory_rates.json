@@ -1,0 +1,74 @@
+[
+  {
+    "height_category": "up_to_4m",
+    "min_height": 0,
+    "max_height": 4,
+    "description": "Buildings up to 4 meters in height",
+    "rates": {
+      "Excellent_Min": 25000,
+      "Excellent_Max": 28000,
+      "Good_Min": 21000,
+      "Good_Max": 24000,
+      "Average_Min": 17000,
+      "Average_Max": 20000,
+      "Economy_Min": 13000,
+      "Economy_Max": 16000,
+      "Minimum_Min": 9000,
+      "Minimum_Max": 12000
+    }
+  },
+  {
+    "height_category": "5m",
+    "min_height": 4.01,
+    "max_height": 5,
+    "description": "Buildings 5 meters in height",
+    "rates": {
+      "Excellent_Min": 28000,
+      "Excellent_Max": 31000,
+      "Good_Min": 24000,
+      "Good_Max": 27000,
+      "Average_Min": 20000,
+      "Average_Max": 23000,
+      "Economy_Min": 16000,
+      "Economy_Max": 19000,
+      "Minimum_Min": 10000,
+      "Minimum_Max": 15000
+    }
+  },
+  {
+    "height_category": "6m",
+    "min_height": 5.01,
+    "max_height": 6,
+    "description": "Buildings 6 meters in height",
+    "rates": {
+      "Excellent_Min": 31000,
+      "Excellent_Max": 34000,
+      "Good_Min": 27000,
+      "Good_Max": 30000,
+      "Average_Min": 23000,
+      "Average_Max": 26000,
+      "Economy_Min": 18000,
+      "Economy_Max": 22000,
+      "Minimum_Min": 11000,
+      "Minimum_Max": 17000
+    }
+  },
+  {
+    "height_category": "above_6m",
+    "min_height": 6.01,
+    "max_height": 9999,
+    "description": "Buildings above 6 meters in height",
+    "rates": {
+      "Excellent_Min": 34000,
+      "Excellent_Max": 40000,
+      "Good_Min": 30000,
+      "Good_Max": 35000,
+      "Average_Min": 25000,
+      "Average_Max": 30000,
+      "Economy_Min": 20000,
+      "Economy_Max": 25000,
+      "Minimum_Min": 12000,
+      "Minimum_Max": 19000
+    }
+  }
+]
