@@ -4,7 +4,7 @@ from core.data_loader import (
     get_building_rates_data, get_component_percentages,
     get_mapping_by_category, get_fuel_station_rates, get_coffee_site_rates,
     get_all_location_data, get_minimum_completion_stages, get_elevator_rates,
-    get_green_house_rates
+    get_green_house_rates, get_mph_factory_rates
 )
 
 # Load all data at the module level
@@ -16,6 +16,7 @@ all_location_data = get_all_location_data()
 minimum_completion_stages = get_minimum_completion_stages()
 elevator_rates = get_elevator_rates()
 green_house_rates = get_green_house_rates()
+mph_factory_rates = get_mph_factory_rates()
 
 
 def get_building_grade_rate(building_type: str, grade: str) -> float:
@@ -140,6 +141,35 @@ def calculate_green_house_value(components: dict) -> float:
     return total_value
 
 
+def calculate_mph_factory_value(components: dict, grade: str) -> float:
+    """
+    Calculates the value of an MPH or Factory building based on height and grade.
+    
+    Args:
+        components: Dictionary containing building components including 'height_meters'
+        grade: The building grade (Excellent, Good, Average, Economy, Minimum)
+        
+    Returns:
+        float: The calculated value per square meter based on height and grade
+    """
+    height = float(components.get("height_meters", 0))
+    
+    # Find the appropriate rate category based on height
+    for category in mph_factory_rates:
+        min_h = category.get("min_height", 0)
+        max_h = category.get("max_height", float('inf'))
+        
+        if min_h <= height <= max_h:
+            rates = category["rates"]
+            # Calculate average of min and max for the grade
+            min_rate = rates.get(f"{grade}_Min", 0)
+            max_rate = rates.get(f"{grade}_Max", 0)
+            return (min_rate + max_rate) / 2
+    
+    # Default return if no matching category found (shouldn't happen with proper configuration)
+    return 0
+
+
 def run_full_valuation(valuation_data: dict) -> dict:
     total_building_cost = 0
     all_suggested_grades = {}
@@ -205,6 +235,20 @@ def run_full_valuation(valuation_data: dict) -> dict:
 
             if category == "Apartment / Condominium":
                 building_cost = calculate_apartment_cost(building_cost, num_floors)
+
+        elif category == "MPH & Factory Building":
+            # Get building grade from materials if not provided
+            suggested_grade = suggest_grade_from_materials(building.get('selected_materials', {}), category)
+            all_suggested_grades[f"Building {i + 1} ({building.get('name')})"] = suggested_grade
+            grade = building.get('confirmed_grade') or suggested_grade
+            
+            # Calculate value based on height and grade
+            rate_per_sqm = calculate_mph_factory_value(building.get('specialized_components', {}), grade)
+            building_cost = total_building_area * rate_per_sqm
+            
+            # Apply basement adjustment if applicable
+            if building.get('has_basement', False):
+                building_cost *= 1.25
 
         elif category == "Fuel Station":
             building_cost = calculate_fuel_station_value(building.get('specialized_components', {}))

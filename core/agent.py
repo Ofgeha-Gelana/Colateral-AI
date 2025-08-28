@@ -20,6 +20,8 @@ llm = init_chat_model("google_genai:gemini-2.0-flash")
 # ------------------------------
 # 2) Static option sets + friendly hints
 # ------------------------------
+VALID_COLLATERAL_TYPES = ["House", "Car"]
+
 VALID_CATEGORIES = [
     "Higher Villa",
     "Multi-Story Building",
@@ -93,21 +95,23 @@ def get_material_components_for_category(category: str) -> List[str]:
 # 4) Slots configuration
 # ------------------------------
 BASE_REQUIRED_SLOTS_IN_ORDER: List[str] = [
-    "building_name",
+    "collateral_type",  # First question: House or Car
     "building_category",
-    "num_sections",
-    "section_dimensions",
+    "prop_town",
+    "gen_use",
+    "plot_area_sqm",
+    "length",
+    "width",
     "num_floors",
     "has_basement",
     "is_under_construction",
     "incomplete_components",
-    "plot_area_sqm",
-    "prop_town",
-    "gen_use",
-    "mcf",
-    "pef",
     "has_elevator",
     "elevator_stops",
+    "num_sections",
+    "section_dimensions",
+    "mcf",
+    "pef",
 ]
 
 SPECIAL_CATEGORY_BASE_SLOTS: List[str] = [
@@ -120,7 +124,7 @@ CATEGORY_SPECIAL_SLOTS: Dict[str, List[str]] = {
     "Higher Villa": [],
     "Multi-Story Building": [],
     "Apartment / Condominium": [],
-    "MPH & Factory Building": [],
+    "MPH & Factory Building": ["height_meters", "has_basement"],
     "Fuel Station": ["site_preparation_area", "forecourt_area", "canopy_area", "num_pump_islands", "num_ugt_30m3",
                      "num_ugt_50m3"],
     "Coffee Washing Site": ["cherry_hopper_area", "fermentation_tanks_area", "washing_channels_length",
@@ -129,6 +133,8 @@ CATEGORY_SPECIAL_SLOTS: Dict[str, List[str]] = {
 }
 
 SPECIAL_SLOT_EXAMPLES: Dict[str, str] = {
+    "height_meters": "e.g., 3.5 (in meters, will determine if <=4m or >4m category applies)",
+    "has_basement": "e.g., yes/no (whether the building has a basement)",
     "site_preparation_area": "e.g., 1500 (sqm)",
     "forecourt_area": "e.g., 800 (sqm)",
     "canopy_area": "e.g., 320 (sqm)",
@@ -180,21 +186,37 @@ def format_choices_with_examples(choices: List[str], examples_map: Dict[str, str
 
 
 def current_required_slots(slots: Dict[str, object]) -> List[str]:
+    # If collateral type is Car, no other questions needed
+    if slots.get("collateral_type", "").lower() == "car":
+        return []
+        
     cat = slots.get("building_category")
     if isinstance(cat, str) and cat in SPECIAL_CATEGORIES:
         req = list(SPECIAL_CATEGORY_BASE_SLOTS)
-    else:
-        req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
-        if cat == "Apartment / Condominium":
-            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
-        elif cat in {"Higher Villa", "MPH & Factory Building"}:
-            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
-
-    if isinstance(cat, str) and cat:
-        for comp in get_material_components_for_category(cat):
-            req.append(f"material__{comp}")
+        # Add only the special slots for special categories
         for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
             req.append(sp)
+        # Skip elevator questions for special categories
+        if "has_elevator" in req:
+            req.remove("has_elevator")
+        if "elevator_stops" in req:
+            req.remove("elevator_stops")
+    else:
+        req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
+        # Only ask about floors and elevators for Multi-Story Building
+        if cat != "Multi-Story Building":
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
+        
+        # For MPH & Factory, we'll get dimensions in sections, so remove length/width from base questions
+        # Also, automatically set gen_use to Commercial for MPH & Factory
+        if cat == "MPH & Factory Building":
+            req = [s for s in req if s not in {"length", "width", "gen_use"}]
+            slots["gen_use"] = "Commercial"  # Auto-set to Commercial
+            
+        # Add material components for non-special categories
+        if cat:
+            for comp in get_material_components_for_category(cat):
+                req.append(f"material__{comp}")
 
     seen = set()
     final: List[str] = []
@@ -233,6 +255,7 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     asked = set(state.get("asked", []))
     remaining = [s for s in missing_slots(slots) if s not in asked]
     
+
     # Get building category
     cat = slots.get("building_category")
     
@@ -242,6 +265,22 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     
     # Handle section dimensions for other building types
     if cat != "Apartment / Condominium" and "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
+    # Handle collateral type selection
+    if "collateral_type" in remaining and "collateral_type" not in asked:
+        question = "Select collateral type (House or Car):"
+        state["messages"].append({"role": "assistant", "content": question})
+        state.setdefault("asked", []).append("collateral_type")
+        return state
+        
+    # If Car is selected, show pending message and end the flow
+    if slots.get("collateral_type", "").lower() == "car":
+        state["messages"].append({"role": "assistant", 
+                                "content": "🚗 Car collateral valuation is currently in development. Please check back later!"})
+        return state
+
+    # Handle the case where we're in the middle of collecting section dimensions
+    if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
+
         s = "section_dimensions"
     elif not remaining:
         return state
@@ -622,14 +661,14 @@ def calculate_node(state: ValuationState) -> ValuationState:
     elevator_stops = int(slots.get("elevator_stops") or 0)
 
     # Building core data
-    # FIX: Correctly call the helper function to get the full specialized_components dict
     specialized_components = _collect_specialized_components(slots, category)
 
+    # Common building fields
     building = {
         "name": str(slots.get("building_name", "Building 1")),
         "category": category,
-        "length": None,
-        "width": None,
+        "length": float(slots.get("length", 0)) if slots.get("length") else None,
+        "width": float(slots.get("width", 0)) if slots.get("width") else None,
         "num_floors": int(slots.get("num_floors", 1)),
         "has_basement": bool(slots.get("has_basement", False)),
         "is_under_construction": bool(slots.get("is_under_construction", False)),
@@ -638,13 +677,40 @@ def calculate_node(state: ValuationState) -> ValuationState:
         ],
         "selected_materials": _collect_selected_materials(slots, category),
         "confirmed_grade": None,
-        "specialized_components": specialized_components,  # This is the crucial fix
+        "specialized_components": specialized_components,
     }
 
+    # For special categories, ensure we have the required fields
+    if category in ["Fuel Station", "Coffee Washing Site", "Green House"]:
+        # Add any additional required fields for special categories
+        if category == "Fuel Station":
+            building.update({
+                "length": float(slots.get("length", 0)) or 0.0,
+                "width": float(slots.get("width", 0)) or 0.0,
+                "num_floors": 1,  # Fuel stations are typically single-story
+            })
+        elif category == "Coffee Washing Site":
+            building.update({
+                "length": float(slots.get("length", 0)) or 0.0,
+                "width": float(slots.get("width", 0)) or 0.0,
+                "num_floors": 1,  # Coffee washing sites are typically single-story
+            })
+        elif category == "Green House":
+            building.update({
+                "length": float(slots.get("length", 0)) or 0.0,
+                "width": float(slots.get("width", 0)) or 0.0,
+                "num_floors": 1,  # Green houses are typically single-story
+            })
+
     # Property details (+ auto plot-grade)
-    prop_town = str(slots.get("prop_town"))
-    gen_use = str(slots.get("gen_use"))
-    plot_area = float(slots.get("plot_area_sqm"))
+    prop_town = str(slots.get("prop_town", "Unknown"))
+    gen_use = str(slots.get("gen_use", "Commercial"))  # Default to Commercial if not specified
+    
+    try:
+        plot_area = float(slots.get("plot_area_sqm", 0) or 0)
+    except (TypeError, ValueError):
+        plot_area = 0.0  # Default to 0 if not provided or invalid
+        
     plot_grade = select_plot_grade(prop_town, gen_use, plot_area)
 
     property_details = {
