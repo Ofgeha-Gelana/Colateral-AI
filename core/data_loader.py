@@ -90,3 +90,7 @@ def get_elevator_rates():
 def get_green_house_rates():
     """Loads green house rates from green_house_rates.json."""
     return load_json_data('green_house_rates.json')
+
+def get_mph_factory_rates():
+    """Loads MPH & Factory building rates based on height from mph_factory_rates.json."""
+    return load_json_data('mph_factory_rates.json')
