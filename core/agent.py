@@ -229,14 +229,22 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
     needed = [s for s in current_required_slots(slots) if s not in slots]
+    
+    cat = slots.get("building_category")
+    
+    # Skip section-related slots for Apartment/Condominium
+    if cat == "Apartment / Condominium":
+        needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "has_basement"}]
 
-    if "has_elevator" in slots and slots.get("has_elevator") is False:
+    # Handle other conditional fields
+    if "has_elevator" in slots and not slots["has_elevator"]:
         needed = [s for s in needed if s != "elevator_stops"]
-    if "is_under_construction" in slots and slots.get("is_under_construction") is False:
+    if "is_under_construction" in slots and not slots["is_under_construction"]:
         needed = [s for s in needed if s != "incomplete_components"]
 
-    if "section_dimensions" in needed:
-        if "section_index" in slots and slots.get("section_index", 0) < int(slots.get("num_sections", 1)):
+    # Only process section_dimensions if it's still needed and not for Apartment/Condominium
+    if "section_dimensions" in needed and cat != "Apartment / Condominium":
+        if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
             needed.remove("section_dimensions")
 
     return needed
@@ -247,6 +255,16 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     asked = set(state.get("asked", []))
     remaining = [s for s in missing_slots(slots) if s not in asked]
     
+
+    # Get building category
+    cat = slots.get("building_category")
+    
+    # Skip section dimensions for Apartment/Condominium
+    if cat == "Apartment / Condominium":
+        remaining = [s for s in remaining if s not in {"num_sections", "section_dimensions"}]
+    
+    # Handle section dimensions for other building types
+    if cat != "Apartment / Condominium" and "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
     # Handle collateral type selection
     if "collateral_type" in remaining and "collateral_type" not in asked:
         question = "Select collateral type (House or Car):"
@@ -262,14 +280,16 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
 
     # Handle the case where we're in the middle of collecting section dimensions
     if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
+
         s = "section_dimensions"
     elif not remaining:
         return state
     else:
-        s = remaining[0]
+        s = remaining[0] if remaining else None
 
-    cat = slots.get("building_category")
-    
+    if s is None:
+        return state
+
     # For special categories, skip directly to their special slots after basic info
     if isinstance(cat, str) and cat in SPECIAL_CATEGORIES and s not in SPECIAL_CATEGORY_BASE_SLOTS + CATEGORY_SPECIAL_SLOTS.get(cat, []):
         next_special = next((slot for slot in CATEGORY_SPECIAL_SLOTS.get(cat, []) if slot not in slots), None)
@@ -322,20 +342,13 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         label = s.replace("_", " ")
         q = f"Enter {label} ({SPECIAL_SLOT_EXAMPLES[s]}):"
     elif s == "section_dimensions":
-        if "section_dimensions" not in slots:
-            slots["section_dimensions"] = []
-        if "section_index" not in slots:
-            slots["section_index"] = 0
-            # Only initialize awaiting_width for non-Apartment/Condominium buildings
-            if cat != "Apartment / Condominium":
-                slots["awaiting_width"] = False
-
-        idx = slots["section_index"]
+        idx = state["slots"].get("section_index", 0)
+        cat = state["slots"].get("building_category")
 
         if cat == "Apartment / Condominium":
             q = f"Enter area of section {idx + 1} in sqm (e.g., 50):"
         else:
-            if slots.get("awaiting_width", False):
+            if state["slots"].get("awaiting_width", False):
                 q = f"Enter width of section {idx + 1} in meters (e.g., 5):"
             else:
                 q = f"Enter length of section {idx + 1} in meters (e.g., 10):"
@@ -393,6 +406,22 @@ def extract_info_node(state: ValuationState) -> ValuationState:
         else:
             state["messages"].append(
                 {"role": "assistant", "content": "Please enter a valid number corresponding to your choice."})
+        return state
+
+    if last_asked == "building_category":
+        # Handle the selected category
+        if content.isdigit() and 0 < int(content) <= len(VALID_CATEGORIES):
+            selected_category = VALID_CATEGORIES[int(content) - 1]
+            state["slots"][last_asked] = selected_category
+            
+            # For Apartment/Condominium, set default values for sections
+            if selected_category == "Apartment / Condominium":
+                state["slots"]["num_sections"] = "1"
+                state["slots"]["section_dimensions"] = [{"area": "100"}]
+                # Mark these as asked so they're skipped
+                state.setdefault("asked", []).extend(["num_sections", "section_dimensions"])
+        else:
+            state["messages"].append({"role": "assistant", "content": "Please select a valid number from the list."})
         return state
 
     if last_asked == "section_dimensions":
@@ -615,6 +644,13 @@ def select_plot_grade(location: str, use_type: str, plot_area: float) -> str:
 def calculate_node(state: ValuationState) -> ValuationState:
     slots = state.get("slots", {})
     category = slots.get("building_category")
+
+    # Set default values for Apartment/Condominium if not already set
+    if category == "Apartment / Condominium":
+        if "num_sections" not in slots:
+            slots["num_sections"] = "1"
+        if "section_dimensions" not in slots:
+            slots["section_dimensions"] = [{"area": "100"}]  # Default area of 100 sqm
 
     # --- Prepare payload for property_valuation_tool ---
 
