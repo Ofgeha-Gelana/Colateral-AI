@@ -588,22 +588,22 @@ def summary_confirmation_node(state: ValuationState) -> ValuationState:
         if "has_basement" in slots:
             detailed_info.append(("Has Basement", 'Yes' if slots['has_basement'] else 'No'))
     
-    # Create a detailed summary message with all calculations
+    # Create a detailed summary message with all calculations (without markdown)
     message = f"""
-    **Property Valuation Summary**
+    PROPERTY VALUATION SUMMARY
     
-    **Property:** {building_name}
-    **Category:** {category}
+    Property: {building_name}
+    Category: {category}
     
-    **Estimated Value:** ETB {int(float(slots.get('forced_sale_value', 0))):,}
+    Estimated Value: ETB {int(float(slots.get('forced_sale_value', 0))):,}
     
-    **Property Details:**
+    PROPERTY DETAILS:
     """
     
     # Add property details
     all_details = property_details + detailed_info
     for label, value in all_details:
-        message += f"- **{label}:** {value}\n"
+        message += f"- {label}: {value}\n"
     
     # Add confirmation prompt
     message += """
@@ -846,18 +846,18 @@ def calculate_node(state: ValuationState) -> ValuationState:
         # Get materials used
         materials = _collect_selected_materials(slots, category)
         
-        # Create a summary with property details and valuation
+        # Create a summary with property details and valuation (without markdown)
         summary_text = f"""
-📌 **PROPERTY DETAILS**
-**Location:** {prop_town}
-**Category:** {category}
-**Property Use:** {gen_use}
-**Plot Area:** {plot_area:,.2f} sqm
+PROPERTY DETAILS
+Location: {prop_town}
+Category: {category}
+Property Use: {gen_use}
+Plot Area: {plot_area:,.2f} sqm
 
-🏠 **PROPERTY VALUATION SUMMARY**
+PROPERTY VALUATION SUMMARY
 
-**Market Value:** {market_value}
-**Forced Sale Value (70% of Market Value):** {valuation_amount}
+Market Value: {market_value}
+Forced Sale Value (70% of Market Value): {valuation_amount}
 """
         
         # Add the final summary message
