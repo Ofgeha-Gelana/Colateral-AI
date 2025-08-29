@@ -108,8 +108,6 @@ BASE_REQUIRED_SLOTS_IN_ORDER: List[str] = [
     "incomplete_components",
     "has_elevator",
     "elevator_stops",
-    "num_sections",
-    "section_dimensions",
     "mcf",
     "pef",
 ]
@@ -167,9 +165,10 @@ def initial_state() -> ValuationState:
 
 def _boolify(text: str) -> Optional[bool]:
     t = text.strip().lower()
-    if t in {"yes", "y", "true", "t", "1"}:
+    # Handle common typos and variations
+    if t in {"yes", "y", "true", "t", "1", "ye", "yea", "yep", "ok", "okay", "sure"}:
         return True
-    if t in {"no", "n", "false", "f", "0"}:
+    if t in {"no", "n", "false", "f", "0", "nah", "nope", "not", "mo", "mo]", "nop"}:
         return False
     return None
 
@@ -203,15 +202,32 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
             req.remove("elevator_stops")
     else:
         req = list(BASE_REQUIRED_SLOTS_IN_ORDER)
-        # Only ask about floors and elevators for Multi-Story Building
-        if cat != "Multi-Story Building":
-            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
         
-        # For MPH & Factory, we'll get dimensions in sections, so remove length/width from base questions
-        # Also, automatically set gen_use to Commercial for MPH & Factory
-        if cat == "MPH & Factory Building":
+        # Handle different building types
+        if cat == "Higher Villa":
+            # Higher Villa: Simple building, no sections, no floors
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
+            
+        elif cat == "Multi-Story Building":
+            # Multi-Story Building: use sections instead of base length/width
+            req = [s for s in req if s not in {"length", "width"}]
+            req.append("num_sections")
+            req.append("section_dimensions")
+            
+        elif cat == "Apartment / Condominium":
+            # Apartment/Condominium: No floors, no sections, no elevator
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
+            
+        elif cat == "MPH & Factory Building":
+            # MPH & Factory: Remove length/width, add special slots
             req = [s for s in req if s not in {"length", "width", "gen_use"}]
             slots["gen_use"] = "Commercial"  # Auto-set to Commercial
+            # Add special slots for MPH & Factory Building
+            for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
+                req.append(sp)
+        else:
+            # Default: Remove floors and elevators for other building types
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
             
         # Add material components for non-special categories
         if cat:
@@ -228,24 +244,38 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
 
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
+    # If collateral type is Car, no slots needed
+    if slots.get("collateral_type", "").lower() == "car":
+        return []
+    
     needed = [s for s in current_required_slots(slots) if s not in slots]
     
     cat = slots.get("building_category")
     
-    # Skip section-related slots for Apartment/Condominium
-    if cat == "Apartment / Condominium":
-        needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "has_basement"}]
+    # Handle different building types
+    if cat == "Higher Villa":
+        # Higher Villa: No sections, no floors
+        needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "num_floors", "has_elevator", "elevator_stops"}]
+        
+    elif cat == "Multi-Story Building":
+        # Multi-Story Building: Keep sections and floors
+        # Only process section_dimensions if we're in the middle of collecting them
+        if "section_dimensions" in needed and "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
+            needed.remove("section_dimensions")
+            
+    elif cat == "Apartment / Condominium":
+        # Apartment/Condominium: No sections, no floors
+        needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "num_floors", "has_elevator", "elevator_stops"}]
+        
+    elif cat == "MPH & Factory Building":
+        # MPH & Factory: No sections, has special slots
+        needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "num_floors", "has_elevator", "elevator_stops"}]
 
-    # Handle other conditional fields
+    # Handle conditional fields
     if "has_elevator" in slots and not slots["has_elevator"]:
         needed = [s for s in needed if s != "elevator_stops"]
     if "is_under_construction" in slots and not slots["is_under_construction"]:
         needed = [s for s in needed if s != "incomplete_components"]
-
-    # Only process section_dimensions if it's still needed and not for Apartment/Condominium
-    if "section_dimensions" in needed and cat != "Apartment / Condominium":
-        if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
-            needed.remove("section_dimensions")
 
     return needed
 
@@ -259,12 +289,23 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     # Get building category
     cat = slots.get("building_category")
     
-    # Skip section dimensions for Apartment/Condominium
-    if cat == "Apartment / Condominium":
-        remaining = [s for s in remaining if s not in {"num_sections", "section_dimensions"}]
+    # Handle different building types
+    if cat == "Higher Villa":
+        # Higher Villa: No sections, no floors
+        remaining = [s for s in remaining if s not in {"num_sections", "section_dimensions", "num_floors", "has_elevator", "elevator_stops"}]
+        
+    elif cat == "Multi-Story Building":
+        # Multi-Story Building: Keep sections and floors
+        pass  # Don't filter anything
+        
+    elif cat == "Apartment / Condominium":
+        # Apartment/Condominium: No sections, no floors
+        remaining = [s for s in remaining if s not in {"num_sections", "section_dimensions", "num_floors", "has_elevator", "elevator_stops"}]
+        
+    elif cat == "MPH & Factory Building":
+        # MPH & Factory: No sections, has special slots
+        remaining = [s for s in remaining if s not in {"num_sections", "section_dimensions", "num_floors", "has_elevator", "elevator_stops"}]
     
-    # Handle section dimensions for other building types
-    if cat != "Apartment / Condominium" and "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
     # Handle collateral type selection
     if "collateral_type" in remaining and "collateral_type" not in asked:
         question = "Select collateral type (House or Car):"
@@ -276,11 +317,12 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     if slots.get("collateral_type", "").lower() == "car":
         state["messages"].append({"role": "assistant", 
                                 "content": "🚗 Car collateral valuation is currently in development. Please check back later!"})
+        # Mark all slots as asked to prevent further questions
+        state["asked"] = list(current_required_slots(slots))
         return state
 
-    # Handle the case where we're in the middle of collecting section dimensions
-    if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
-
+    # Handle the case where we're in the middle of collecting section dimensions (only for Multi-Story Building)
+    if cat == "Multi-Story Building" and "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
         s = "section_dimensions"
     elif not remaining:
         return state
@@ -295,6 +337,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         next_special = next((slot for slot in CATEGORY_SPECIAL_SLOTS.get(cat, []) if slot not in slots), None)
         if next_special:
             s = next_special
+    
+    # For MPH & Factory Building, ensure height_meters is asked before materials
+    if cat == "MPH & Factory Building" and "height_meters" not in slots and s.startswith("material__"):
+        s = "height_meters"
 
     options_map = {
         "building_category": VALID_CATEGORIES,
@@ -336,8 +382,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         state["slots"]["__expected_choices__"] = (s, choices)
     elif s.startswith("material__"):
         comp = s.split("__", 1)[1]
-        ex = MATERIAL_EXAMPLES.get(comp.lower(), "describe the material clearly")
-        q = f"Enter the selected material for {comp} (e.g., {ex}):"
+        material_options = MATERIAL_EXAMPLES.get(comp.lower(), "Reinforced concrete; Stone; Mud block").split("; ")
+        body = "\n".join(f"{i + 1}. {option}" for i, option in enumerate(material_options))
+        q = f"Select material for {comp}:\n{body}\n(Reply with the number)"
+        state["slots"]["__expected_choices__"] = (s, material_options)
     elif s in SPECIAL_SLOT_EXAMPLES:
         label = s.replace("_", " ")
         q = f"Enter {label} ({SPECIAL_SLOT_EXAMPLES[s]}):"
@@ -424,9 +472,24 @@ def extract_info_node(state: ValuationState) -> ValuationState:
             state["messages"].append({"role": "assistant", "content": "Please select a valid number from the list."})
         return state
 
+    if last_asked == "num_sections":
+        # Initialize section collection
+        try:
+            n = int(content)
+            state["slots"]["num_sections"] = n
+            state["slots"]["section_index"] = 0
+            state["slots"]["awaiting_width"] = False
+        except ValueError:
+            state["messages"].append({"role": "assistant", "content": "Please enter a valid integer for number of sections."})
+        return state
+
     if last_asked == "section_dimensions":
         idx = state["slots"].get("section_index", 0)
         cat = state["slots"].get("building_category")
+
+        # Initialize section_dimensions if it doesn't exist
+        if "section_dimensions" not in state["slots"]:
+            state["slots"]["section_dimensions"] = []
 
         if cat == "Apartment / Condominium":
             try:
@@ -575,6 +638,11 @@ def process_confirmation_node(state: ValuationState) -> ValuationState:
 
 def should_calculate(state: ValuationState) -> str:
     slots = state.get("slots", {})
+    
+    # If car is selected, don't proceed with valuation
+    if slots.get("collateral_type", "").lower() == "car":
+        return "ASK"  # This will prevent further processing
+    
     remaining = missing_slots(slots)
 
     if "section_dimensions" in remaining:
@@ -617,7 +685,16 @@ def _collect_specialized_components(slots: Dict[str, object], category: str) -> 
         total_area = 0.0
         if category == "Apartment / Condominium":
             total_area = sum(float(sec.get("area", 0)) for sec in slots.get("section_dimensions", []))
+        elif category == "MPH & Factory Building":
+            # For MPH & Factory, use plot area as total building area
+            total_area = float(slots.get("plot_area_sqm", 0) or 0)
+        elif category == "Higher Villa":
+            # For Higher Villa, use length × width (simple building)
+            length = float(slots.get("length", 0) or 0)
+            width = float(slots.get("width", 0) or 0)
+            total_area = length * width
         else:
+            # For Multi-Story Building, use sections
             total_area = sum(
                 float(sec.get("length", 0)) * float(sec.get("width", 0)) for sec in slots.get("section_dimensions", []))
         spec["total_building_area"] = total_area
