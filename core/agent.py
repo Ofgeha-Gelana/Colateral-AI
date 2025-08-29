@@ -167,9 +167,10 @@ def initial_state() -> ValuationState:
 
 def _boolify(text: str) -> Optional[bool]:
     t = text.strip().lower()
-    if t in {"yes", "y", "true", "t", "1"}:
+    # Handle common typos and variations
+    if t in {"yes", "y", "true", "t", "1", "ye", "yea", "yep", "ok", "okay", "sure"}:
         return True
-    if t in {"no", "n", "false", "f", "0"}:
+    if t in {"no", "n", "false", "f", "0", "nah", "nope", "not", "mo", "mo]", "nop"}:
         return False
     return None
 
@@ -210,8 +211,11 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
         # For MPH & Factory, we'll get dimensions in sections, so remove length/width from base questions
         # Also, automatically set gen_use to Commercial for MPH & Factory
         if cat == "MPH & Factory Building":
-            req = [s for s in req if s not in {"length", "width", "gen_use"}]
+            req = [s for s in req if s not in {"length", "width", "gen_use", "num_sections", "section_dimensions"}]
             slots["gen_use"] = "Commercial"  # Auto-set to Commercial
+            # Add special slots for MPH & Factory Building
+            for sp in CATEGORY_SPECIAL_SLOTS.get(cat, []):
+                req.append(sp)
             
         # Add material components for non-special categories
         if cat:
@@ -228,6 +232,10 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
 
 
 def missing_slots(slots: Dict[str, object]) -> List[str]:
+    # If collateral type is Car, no slots needed
+    if slots.get("collateral_type", "").lower() == "car":
+        return []
+    
     needed = [s for s in current_required_slots(slots) if s not in slots]
     
     cat = slots.get("building_category")
@@ -235,6 +243,10 @@ def missing_slots(slots: Dict[str, object]) -> List[str]:
     # Skip section-related slots for Apartment/Condominium
     if cat == "Apartment / Condominium":
         needed = [s for s in needed if s not in {"num_sections", "section_dimensions", "has_basement"}]
+    
+    # Skip section-related slots for MPH & Factory Building
+    if cat == "MPH & Factory Building":
+        needed = [s for s in needed if s not in {"num_sections", "section_dimensions"}]
 
     # Handle other conditional fields
     if "has_elevator" in slots and not slots["has_elevator"]:
@@ -242,8 +254,8 @@ def missing_slots(slots: Dict[str, object]) -> List[str]:
     if "is_under_construction" in slots and not slots["is_under_construction"]:
         needed = [s for s in needed if s != "incomplete_components"]
 
-    # Only process section_dimensions if it's still needed and not for Apartment/Condominium
-    if "section_dimensions" in needed and cat != "Apartment / Condominium":
+    # Only process section_dimensions if it's still needed and not for Apartment/Condominium or MPH & Factory
+    if "section_dimensions" in needed and cat not in ["Apartment / Condominium", "MPH & Factory Building"]:
         if "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
             needed.remove("section_dimensions")
 
@@ -259,12 +271,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     # Get building category
     cat = slots.get("building_category")
     
-    # Skip section dimensions for Apartment/Condominium
-    if cat == "Apartment / Condominium":
+    # Skip section dimensions for Apartment/Condominium and MPH & Factory Building
+    if cat in ["Apartment / Condominium", "MPH & Factory Building"]:
         remaining = [s for s in remaining if s not in {"num_sections", "section_dimensions"}]
     
-    # Handle section dimensions for other building types
-    if cat != "Apartment / Condominium" and "section_index" in slots and slots["section_index"] < int(slots.get("num_sections", 1)):
     # Handle collateral type selection
     if "collateral_type" in remaining and "collateral_type" not in asked:
         question = "Select collateral type (House or Car):"
@@ -276,6 +286,8 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
     if slots.get("collateral_type", "").lower() == "car":
         state["messages"].append({"role": "assistant", 
                                 "content": "🚗 Car collateral valuation is currently in development. Please check back later!"})
+        # Mark all slots as asked to prevent further questions
+        state["asked"] = list(current_required_slots(slots))
         return state
 
     # Handle the case where we're in the middle of collecting section dimensions
@@ -295,6 +307,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         next_special = next((slot for slot in CATEGORY_SPECIAL_SLOTS.get(cat, []) if slot not in slots), None)
         if next_special:
             s = next_special
+    
+    # For MPH & Factory Building, ensure height_meters is asked before materials
+    if cat == "MPH & Factory Building" and "height_meters" not in slots and s.startswith("material__"):
+        s = "height_meters"
 
     options_map = {
         "building_category": VALID_CATEGORIES,
@@ -336,8 +352,10 @@ def ask_next_question_node(state: ValuationState) -> ValuationState:
         state["slots"]["__expected_choices__"] = (s, choices)
     elif s.startswith("material__"):
         comp = s.split("__", 1)[1]
-        ex = MATERIAL_EXAMPLES.get(comp.lower(), "describe the material clearly")
-        q = f"Enter the selected material for {comp} (e.g., {ex}):"
+        material_options = MATERIAL_EXAMPLES.get(comp.lower(), "Reinforced concrete; Stone; Mud block").split("; ")
+        body = "\n".join(f"{i + 1}. {option}" for i, option in enumerate(material_options))
+        q = f"Select material for {comp}:\n{body}\n(Reply with the number)"
+        state["slots"]["__expected_choices__"] = (s, material_options)
     elif s in SPECIAL_SLOT_EXAMPLES:
         label = s.replace("_", " ")
         q = f"Enter {label} ({SPECIAL_SLOT_EXAMPLES[s]}):"
@@ -428,6 +446,10 @@ def extract_info_node(state: ValuationState) -> ValuationState:
         idx = state["slots"].get("section_index", 0)
         cat = state["slots"].get("building_category")
 
+        # Initialize section_dimensions if it doesn't exist
+        if "section_dimensions" not in state["slots"]:
+            state["slots"]["section_dimensions"] = []
+
         if cat == "Apartment / Condominium":
             try:
                 area = float(content)
@@ -459,6 +481,7 @@ def extract_info_node(state: ValuationState) -> ValuationState:
                     num_sections = int(state["slots"].get("num_sections", 1))
                     if state["slots"]["section_index"] >= num_sections:
                         state["slots"].pop("section_index", None)
+                        state["slots"]["section_index"] = None
                         state["slots"].pop("awaiting_width", None)
                         if "section_dimensions" not in state["asked"]:
                             state["asked"].append("section_dimensions")
@@ -575,6 +598,11 @@ def process_confirmation_node(state: ValuationState) -> ValuationState:
 
 def should_calculate(state: ValuationState) -> str:
     slots = state.get("slots", {})
+    
+    # If car is selected, don't proceed with valuation
+    if slots.get("collateral_type", "").lower() == "car":
+        return "ASK"  # This will prevent further processing
+    
     remaining = missing_slots(slots)
 
     if "section_dimensions" in remaining:
@@ -617,6 +645,9 @@ def _collect_specialized_components(slots: Dict[str, object], category: str) -> 
         total_area = 0.0
         if category == "Apartment / Condominium":
             total_area = sum(float(sec.get("area", 0)) for sec in slots.get("section_dimensions", []))
+        elif category == "MPH & Factory Building":
+            # For MPH & Factory, use plot area as total building area
+            total_area = float(slots.get("plot_area_sqm", 0) or 0)
         else:
             total_area = sum(
                 float(sec.get("length", 0)) * float(sec.get("width", 0)) for sec in slots.get("section_dimensions", []))
