@@ -120,7 +120,7 @@ SPECIAL_CATEGORIES = ["Fuel Station", "Coffee Washing Site", "Green House"]
 
 CATEGORY_SPECIAL_SLOTS: Dict[str, List[str]] = {
     "Higher Villa": [],
-    "Multi-Story Building": ["num_sections", "section_dimensions"],
+    "Multi-Story Building": [],
     "Apartment / Condominium": [],
     "MPH & Factory Building": ["height_meters", "has_basement"],
     "Fuel Station": ["site_preparation_area", "forecourt_area", "canopy_area", "num_pump_islands", "num_ugt_30m3",
@@ -209,9 +209,10 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
             req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
             
         elif cat == "Multi-Story Building":
-            # Multi-Story Building: Keep floors and add sections
-            # Only ask about floors and elevators for Multi-Story Building
-            pass  # Keep all the fields including num_floors, has_elevator, elevator_stops
+            # Multi-Story Building: use sections instead of base length/width
+            req = [s for s in req if s not in {"length", "width"}]
+            req.append("num_sections")
+            req.append("section_dimensions")
             
         elif cat == "Apartment / Condominium":
             # Apartment/Condominium: No floors, no sections, no elevator
@@ -471,6 +472,17 @@ def extract_info_node(state: ValuationState) -> ValuationState:
             state["messages"].append({"role": "assistant", "content": "Please select a valid number from the list."})
         return state
 
+    if last_asked == "num_sections":
+        # Initialize section collection
+        try:
+            n = int(content)
+            state["slots"]["num_sections"] = n
+            state["slots"]["section_index"] = 0
+            state["slots"]["awaiting_width"] = False
+        except ValueError:
+            state["messages"].append({"role": "assistant", "content": "Please enter a valid integer for number of sections."})
+        return state
+
     if last_asked == "section_dimensions":
         idx = state["slots"].get("section_index", 0)
         cat = state["slots"].get("building_category")
@@ -510,7 +522,6 @@ def extract_info_node(state: ValuationState) -> ValuationState:
                     num_sections = int(state["slots"].get("num_sections", 1))
                     if state["slots"]["section_index"] >= num_sections:
                         state["slots"].pop("section_index", None)
-                        state["slots"]["section_index"] = None
                         state["slots"].pop("awaiting_width", None)
                         if "section_dimensions" not in state["asked"]:
                             state["asked"].append("section_dimensions")
