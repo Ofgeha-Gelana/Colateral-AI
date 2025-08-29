@@ -215,8 +215,8 @@ def current_required_slots(slots: Dict[str, object]) -> List[str]:
             req.append("section_dimensions")
             
         elif cat == "Apartment / Condominium":
-            # Apartment/Condominium: No floors, no sections, no elevator
-            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops"}]
+            # Apartment/Condominium: No floors, no sections, no elevator, no base length/width
+            req = [s for s in req if s not in {"num_floors", "has_elevator", "elevator_stops", "length", "width"}]
             
         elif cat == "MPH & Factory Building":
             # MPH & Factory: Remove length/width, add special slots
